@@ -1,7 +1,8 @@
-"""Baixador de YouTube — aplicação desktop baseada no yt-dlp."""
+"""VidNeon — app desktop para baixar vídeos e áudios, baseado no yt-dlp."""
 
-APP_NAME = "Baixador de YouTube"
-APP_ID = "BaixadorYouTube"
+APP_NAME = "VidNeon"
+APP_ID = "VidNeon"
+OLD_APP_IDS = ("BaixadorYouTube",)  # nomes antigos (migração de dados)
 
 # Valores padrão; o build do GitHub Actions sobrescreve via _build_info.py
 __version__ = "0.0.0-dev"

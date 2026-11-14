@@ -1,4 +1,8 @@
-# YouTube Downloader
+<p align="center"><img src="assets/icon.png" width="128" alt="icon"></p>
+
+# VidNeon
+
+**Download videos and audio** — free, ad-free and open source.
 
 [Português](README.md) · **English**
 
@@ -20,7 +24,7 @@ Downloading a YouTube video should be simple, but in practice:
 
 ## The solution
 
-YouTube Downloader puts yt-dlp behind a simple interface and handles the problems above on its own:
+VidNeon puts yt-dlp behind a simple interface and handles the problems above on its own:
 
 | Problem | How the app solves it |
 |---|---|
@@ -29,21 +33,26 @@ YouTube Downloader puts yt-dlp behind a simple interface and handles the problem
 | "I'm not a robot", age restriction | Uses the login you already have in your browser (Opera GX, Opera, Chrome, Edge, Brave, Vivaldi, Firefox) or a `cookies.txt`. The **Test login** button confirms that it works. |
 | Browser locking its cookies | Detects that the browser is open and offers to close it before downloading. |
 | "Format not available" | Checks whether Deno (or Node.js) is installed and installs it in one click via `winget`. |
+| Components that are hard to install and remove | The *Components* screen installs and uninstalls ffmpeg, Deno, Node.js and VLC in one click. |
 | Low quality and no MP3 | Checks whether ffmpeg is installed and installs it in one click. With it, the app merges high-quality video and audio and converts to MP3. |
 | Technical error messages | Turns each error into an explanation of what to do, in English or Portuguese. |
 | YouTube changed and the app stopped working | Every new app version is built with the latest yt-dlp, and the app tells you when an update is available. |
 
 ## Features
 
-- **Download queue**: paste several links at once. Each item shows progress, speed and time left, and can be cancelled or retried.
+- **Download queue**: paste several links at once. Each item shows its thumbnail, progress, speed and time left, and can be cancelled or retried.
 - **Quality**: best available, 1080p, 720p, 480p, MP3 or M4A.
 - **Whole playlists**, saved in a subfolder named after the playlist.
 - **Subtitles** in the languages you choose, embedded in the video.
+- **Thumbnail preview** of every video or audio file, in the queue and in the list, even with the embed-cover option off. For older files, the thumbnail is generated from the file itself.
+- **Built-in player**: plays videos and audio inside the app, with pause, skip back/forward 10 s, a seek bar, volume and full screen. It uses VLC; without it, the file opens in the Windows player.
 - **Metadata and cover** (title, channel, chapters and thumbnail) written into the file.
 - **Download folder** shown on the main screen, with buttons to open and change it.
-- **Downloaded videos**: a list with search and buttons to open the file, open the folder, download again or delete. When deleting, you choose between removing it from the **list only** or **deleting the file**; the file goes to the Recycle Bin and the app warns you before deleting.
+- **Library**: a list of downloaded videos, with search and buttons to play, open the folder, download again or delete. If the file is still in the folder, "Download again" asks whether you want to play the current file or replace it. When deleting, you choose between removing it from the **list only** or **deleting the file**; the file goes to the Recycle Bin and the app warns you before deleting.
 - **Pastes links on its own** when you copy a YouTube link and switch back to the app.
-- **Languages**: English and Portuguese, switchable instantly in *Settings › Language*.
+- **Languages**: English and Portuguese, switchable instantly in *Settings › General*.
+- **Modern Windows 11-style interface**: sidebar, light and dark themes, brand colors (neon rose and violet) and native Windows icons (Segoe Fluent Icons).
+- **Shortcuts**: Ctrl+V pastes the link and starts downloading · Ctrl+L focuses the link field · Ctrl+1/2/3 switch between Download, Library and Settings.
 - **Theme**: light, dark or follow the system.
 - **Installer** in English or Portuguese, with a choice of installation folder.
 
@@ -67,7 +76,7 @@ flowchart LR
 3. **Login** (`app/browsers.py`): detects the installed browsers and reads cookies **locally**, using yt-dlp's own reader. Opera GX has its own profile folder, which the app passes to yt-dlp. Cookies never leave your computer.
 4. **Components** (`app/deps.py`): looks for ffmpeg, Deno and Node.js, installs the missing ones with `winget`, and reloads the Windows PATH without a restart.
 5. **Errors** (`friendly_error`): turns yt-dlp's technical message into clear guidance.
-6. **Data** (`app/config.py`): settings and history are stored in `%APPDATA%\BaixadorYouTube` (`config.json` and `historico.json`).
+6. **Data** (`app/config.py`): settings and history are stored in `%APPDATA%\VidNeon` (`config.json` and `historico.json`). On the first run of v2, the v1 data (`%APPDATA%\BaixadorYouTube`) is copied automatically.
 7. **Languages** (`app/i18n.py`): all text lives in one dictionary per language. The starting language is the one chosen in the installer; if there is none, it is the Windows language.
 
 ---
@@ -76,16 +85,16 @@ flowchart LR
 
 The repository's **Releases** tab offers two options:
 
-- **`BaixadorYouTube-Setup.exe`** (recommended): installer in English or Portuguese. It lets you choose the installation folder, creates Start Menu shortcuts and, optionally, a Desktop shortcut, and shows up in *Settings › Apps* for uninstalling. It doesn't ask for an administrator password.
-- **`BaixadorYouTube.exe`** (portable): runs directly, no installation.
+- **`VidNeon-Setup.exe`** (recommended): installer in English or Portuguese. If you already have v1 ("YouTube Downloader"), it upgrades the existing installation. It lets you choose the installation folder, creates Start Menu shortcuts and, optionally, a Desktop shortcut, and shows up in *Settings › Apps* for uninstalling. It doesn't ask for an administrator password.
+- **`VidNeon.exe`** (portable): runs directly, no installation.
 
 If Windows SmartScreen shows a warning, click *More info* and then *Run anyway*. The app has no paid code-signing certificate.
 
 ### First run
 
 1. If the yellow "Missing components" bar appears, click **Install now** to install ffmpeg and Deno.
-2. In **Settings › YouTube login**, choose the browser where you are logged in and click **Test login**.
-3. In the **Download** tab, paste the link, choose the quality and click **Download**.
+2. In **Settings › Login**, choose the browser where you are logged in and click **Test login**.
+3. In the **Download** screen, paste the link, choose the quality and click **Download**.
 
 ## Troubleshooting
 
@@ -104,8 +113,8 @@ If Windows SmartScreen shows a warning, click *More info* and then *Run anyway*.
 ### Run from source
 
 ```powershell
-git clone https://github.com/YOUR_USER/baixador-youtube.git
-cd baixador-youtube
+git clone https://github.com/GuiSysLima/desktube-downloader.git
+cd desktube-downloader
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -117,17 +126,17 @@ python run.py
 ```powershell
 .\build.ps1
 ```
-The script creates `dist\BaixadorYouTube.exe`. If Inno Setup is installed (`winget install JRSoftware.InnoSetup`), it also creates `dist\BaixadorYouTube-Setup.exe`.
+The script creates `dist\VidNeon.exe`. If Inno Setup is installed (`winget install JRSoftware.InnoSetup`), it also creates `dist\VidNeon-Setup.exe`.
 
 ### Release a version (GitHub Actions)
 
 The `.github/workflows/build.yml` workflow builds everything on a GitHub Windows machine:
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
-After about 5 minutes, the `v1.0.0` Release appears with the installer and the portable `.exe`. To test without publishing, use *Actions › Build Windows › Run workflow*.
+After about 5 minutes, the `v2.0.0` Release appears with the installer and the portable `.exe`. To test without publishing, use *Actions › Build Windows › Run workflow*.
 
 ### Add a language
 
@@ -146,6 +155,11 @@ app/
   config.py      settings and history
   fsutil.py      sending files to the Recycle Bin
   i18n.py        translations (pt / en)
+  theme.py       design system: colors, fonts, radii, spacing, icons
+  widgets.py     reusable UI components (cards, buttons, dialogs, toasts)
+  thumbs.py      cached thumbnails (preview)
+  player.py      built-in player (VLC)
+assets/          app icon (.ico / .png)
 cli/             terminal version (simple script)
 run.py           shortcut: python run.py
 build.ps1        builds the .exe and the installer locally

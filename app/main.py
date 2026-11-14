@@ -13,7 +13,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BaixadorYouTube.App")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("VidNeon.App")
         except Exception:
             pass
 
