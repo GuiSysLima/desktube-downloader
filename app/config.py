@@ -7,7 +7,7 @@ import os
 import shutil
 import time
 import uuid
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
 from . import APP_ID, OLD_APP_IDS
 
@@ -54,7 +54,7 @@ def config_dir() -> str:
 CONFIG_PATH = os.path.join(config_dir(), "config.json")
 HISTORY_PATH = os.path.join(config_dir(), "historico.json")
 DEFAULT_OUTPUT = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
-HISTORY_LIMIT = 300
+HISTORY_LIMIT = 2000
 
 
 @dataclass
@@ -71,6 +71,11 @@ class Settings:
     watch_clipboard: bool = True
     theme: str = "system"          # system | light | dark
     language: str = ""             # "pt" | "en" | "" (automático: instalador ou Windows)
+    component_paths: dict = field(default_factory=dict)  # caminhos escolhidos em "Localizar…"
+    volume: int = 80               # volume do player
+    animations: bool = True        # animações da interface (desligadas também se o Windows pedir)
+    auto_update_check: bool = True # procurar atualização ao abrir (1x por dia)
+    last_update_check: float = 0.0
 
     @classmethod
     def load(cls) -> "Settings":
@@ -106,14 +111,38 @@ def save_history(items: list) -> None:
 
 
 def add_history(entry: dict) -> list:
+    return add_history_many([entry])
+
+
+def add_history_many(entries: list) -> list:
+    """Adiciona itens no topo, na ordem dada (o 1º da lista fica em cima). O mesmo arquivo
+    baixado de novo substitui o registro antigo, sem duplicar; a capa escolhida é mantida."""
     items = load_history()
-    # o mesmo arquivo baixado de novo substitui o registro antigo (sem duplicar a lista)
-    if entry.get("filepath"):
-        items = [h for h in items if h.get("filepath") != entry["filepath"]]
-    entry = {"id": uuid.uuid4().hex, "when": time.strftime("%Y-%m-%d %H:%M"), **entry}
-    items.insert(0, entry)
+    when = time.strftime("%Y-%m-%d %H:%M")
+    new = []
+    for entry in entries:
+        old = next((h for h in items if entry.get("filepath") and h.get("filepath") == entry["filepath"]), None)
+        if old is not None:
+            items.remove(old)
+            if old.get("custom_thumb"):
+                entry = {**entry, "thumb": old["thumb"], "custom_thumb": True}
+        new.append({"id": uuid.uuid4().hex, "when": when, **entry})
+    items = new + items
     save_history(items)
     return items
+
+
+def update_history(predicate, **changes) -> int:
+    """Altera os itens em que predicate(item) é verdadeiro. Devolve quantos mudaram."""
+    items = load_history()
+    n = 0
+    for h in items:
+        if predicate(h):
+            h.update(changes)
+            n += 1
+    if n:
+        save_history(items)
+    return n
 
 
 def remove_history(entry: dict) -> None:

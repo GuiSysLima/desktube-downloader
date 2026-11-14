@@ -3,6 +3,7 @@
 # Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Fila de downloads em segundo plano usando o yt-dlp."""
 import itertools
+import logging
 import os
 import queue
 import threading
@@ -12,7 +13,7 @@ from dataclasses import asdict, dataclass, field
 import yt_dlp
 
 from . import browsers, deps, thumbs
-from .config import add_history
+from .config import add_history_many
 
 # Rótulos traduzidos em i18n.py com as chaves "q_<qualidade>"
 QUALITIES = ("best", "1080", "720", "480", "mp3", "m4a")
@@ -75,6 +76,14 @@ def _fmt_eta(v):
     h, rem = divmod(v, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+log = logging.getLogger("baixador")
+
+
+def _final_path(info):
+    """Caminho do arquivo final de um item no resultado do yt-dlp."""
+    downloads = info.get("requested_downloads") or []
+    return (downloads[-1].get("filepath") if downloads else None) or info.get("filepath") or ""
 
 
 class Cancelled(Exception):
@@ -197,8 +206,10 @@ class Downloader:
             opts["overwrites"] = True
         if ffmpeg:
             opts["ffmpeg_location"] = ffmpeg
-        # Desafios JavaScript do YouTube: o yt-dlp usa o Deno por padrão; sem ele, tenta o Node
-        if not st["deno"] and st["node"]:
+        # Desafios JavaScript do YouTube: passa o caminho exato (o executável pode não estar no PATH)
+        if st["deno"]:
+            opts["js_runtimes"] = {"deno": {"path": st["deno"]}}
+        elif st["node"]:
             opts["js_runtimes"] = {"node": {"path": st["node"]}}
 
         # Login (cookies)
@@ -262,17 +273,26 @@ class Downloader:
             job.thumb = thumbs.from_file(job.filepath, thumbs.key_for("file:" + job.filepath)) or ""
         self._emit(job)
         try:
-            add_history({
-                "title": job.title or job.url,
-                "url": job.url,
-                "quality": job.quality,
-                "filepath": job.filepath,
-                "thumb": job.thumb,
-                "folder": os.path.dirname(job.filepath) if job.filepath else s.output_dir,
-            })
+            records = getattr(job, "_records", None) or [{"title": job.title or job.url, "url": job.url,
+                                                         "filepath": job.filepath, "thumb": job.thumb}]
+            entries = []
+            for r in records:
+                path = r.get("filepath") or ""
+                entries.append({
+                    "title": r.get("title") or job.url,
+                    "url": r.get("url") or job.url,
+                    "quality": job.quality,
+                    "filepath": path,
+                    "thumb": r.get("thumb") or (job.thumb if len(records) == 1 else ""),
+                    "channel": r.get("channel", ""),
+                    "playlist": r.get("playlist", ""),
+                    "playlist_id": r.get("playlist_id", ""),
+                    "folder": os.path.dirname(path) if path else s.output_dir,
+                })
+            add_history_many(entries)
             self.events.put(("history", None))
         except Exception:
-            pass
+            log.exception("history")
 
     def _on_progress(self, job, d):
         if job.id in self._cancel:
@@ -313,14 +333,45 @@ class Downloader:
             job.title = info.get("title") or last.get("title") or job.title
         else:
             job.title = info.get("title") or job.title
-        downloads = last.get("requested_downloads") or []
-        path = (downloads[-1].get("filepath") if downloads else None) or last.get("filepath")
+        path = _final_path(last)
         if path:
             job.filepath = path
         if last.get("id"):
             self._ensure_thumb(job, last)
+        # um registro por item (uma playlist vira vários itens na Biblioteca, com canal e playlist)
+        playlist = info.get("title", "") if entries else ""
+        playlist_id = info.get("id", "") if entries else ""
+        job._records = []
+        for e in entries or [info]:
+            fp = _final_path(e)
+            if not fp:
+                continue
+            job._records.append({
+                "title": e.get("title") or "",
+                "url": e.get("webpage_url") or e.get("original_url") or job.url,
+                "filepath": fp,
+                "thumb": self._entry_thumb(e) if entries else "",
+                "channel": e.get("channel") or e.get("uploader") or e.get("artist") or "",
+                "playlist": playlist,
+                "playlist_id": playlist_id,
+            })
         if info.get("entries") is not None and len(entries) < len(list(info.get("entries") or [])):
             raise RuntimeError("__partial__")
+
+    @staticmethod
+    def _entry_thumb(info):
+        """Miniatura de um item (roda na thread do download; usa o cache quando já existe)."""
+        vid = info.get("id")
+        if not vid:
+            return ""
+        key = thumbs.key_for(f"{info.get('extractor_key', '')}:{vid}")
+        cached = thumbs.cached(key)
+        if cached:
+            return cached
+        try:
+            return thumbs.from_url(thumbs.best_thumbnail_url(info), key) or ""
+        except Exception:
+            return ""
 
     def _ensure_thumb(self, job, info):
         """Busca a miniatura do item atual em segundo plano (uma vez por vídeo)."""

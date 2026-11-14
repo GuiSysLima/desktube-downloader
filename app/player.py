@@ -1,21 +1,19 @@
 # VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
 # SPDX-License-Identifier: GPL-3.0-only
 # Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
-"""Player interno de vídeo/áudio, baseado no VLC (libvlc) embutido numa janela do app.
+"""Reprodução com fila (estilo Spotify), baseada no VLC (libvlc).
 
-O VLC precisa estar instalado (Configurações › Componentes). Sem ele, o app abre o arquivo
-no player padrão do Windows.
+Este módulo não tem interface: a classe Playback guarda a fila e controla o VLC.
+A interface (barra "tocando agora" e página Reproduzindo) fica em app/ui/playing.py.
+O VLC precisa estar instalado (Configurações › Componentes); sem ele, o app oferece abrir o
+arquivo no player padrão do Windows.
 """
 import ctypes
 import os
+import random
 import sys
-import tkinter as tk
-
-import customtkinter as ctk
 
 from . import deps
-from .i18n import t
-from .theme import C, SP, font, glyph, icon_font
 
 _vlc = None          # módulo vlc carregado
 _load_error = None   # motivo da falha, se houver
@@ -73,165 +71,250 @@ def _fmt(ms):
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
-class PlayerWindow(ctk.CTkToplevel):
-    """Janela do player: área de vídeo (ou capa, para áudio) + controles."""
+AUDIO_EXT = (".mp3", ".m4a", ".aac", ".opus", ".ogg", ".wav", ".flac")
+REPEAT_MODES = ("off", "all", "one")
 
-    AUDIO_EXT = (".mp3", ".m4a", ".aac", ".opus", ".ogg", ".wav", ".flac")
 
-    def __init__(self, master, path, title="", cover_image=None, on_open_external=None):
-        super().__init__(master)
+def fmt_time(ms):
+    return _fmt(ms)
+
+
+def make_item(path, title="", thumb=None, quality="", artist=""):
+    """Item da fila. kind = 'audio' ou 'video' (pela extensão); artist = canal de origem."""
+    kind = "audio" if path.lower().endswith(AUDIO_EXT) or quality in ("mp3", "m4a") else "video"
+    return {"path": path, "title": title or os.path.splitext(os.path.basename(path))[0],
+            "thumb": thumb or "", "kind": kind, "artist": artist or ""}
+
+
+class Playback:
+    """Fila de reprodução + VLC. Chamado só pela thread principal (a interface chama tick())."""
+
+    def __init__(self, on_change=None, volume=80):
         vlc = load_vlc()
-        self.path = path
-        self.on_open_external = on_open_external
-        self.is_audio = path.lower().endswith(self.AUDIO_EXT)
-        self._dragging = False
-        self._closing = False
-        self.title(title or os.path.basename(path))
-        self.geometry("700x440" if self.is_audio else "960x600")
-        self.minsize(420, 300)
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-
-        # --- área de exibição
-        from .widgets import IconButton, button, icon_label  # import local: evita ciclo widgets<->player
-        self.configure(fg_color=C["bg"])
-        if self.is_audio:
-            area = ctk.CTkFrame(self, fg_color=C["sidebar"], corner_radius=0)
-            area.grid(row=0, column=0, sticky="nsew")
-            inner = ctk.CTkFrame(area, fg_color="transparent")
-            inner.place(relx=0.5, rely=0.5, anchor="center")
-            if cover_image is not None:
-                ctk.CTkLabel(inner, image=cover_image, text="").pack(pady=(0, SP["md"]))
-            else:
-                icon_label(inner, "audio", 64, C["accent"]).pack(pady=(0, SP["md"]))
-            ctk.CTkLabel(inner, text=self.title(), font=font("section"), wraplength=520).pack()
-            self.video = None
-        else:
-            self.video = tk.Frame(self, bg="black", highlightthickness=0)
-            self.video.grid(row=0, column=0, sticky="nsew")
-            self.video.bind("<Double-Button-1>", lambda e: self._toggle_fullscreen())
-            self.video.bind("<Button-1>", lambda e: self.toggle())
-
-        # --- controles
-        bar = ctk.CTkFrame(self, corner_radius=0, fg_color=C["card"], border_width=0)
-        bar.grid(row=1, column=0, sticky="ew")
-        bar.grid_columnconfigure(4, weight=1)
-        self.play_btn = IconButton(bar, "pause", t("tip_play"), "accent", size=40, icon_size=16, command=self.toggle)
-        self.play_btn.grid(row=0, column=0, padx=(SP["md"], SP["xs"]), pady=SP["sm"])
-        IconButton(bar, "back10", "−10 s", command=lambda: self.skip(-10000)).grid(row=0, column=1, padx=2)
-        IconButton(bar, "fwd10", "+10 s", command=lambda: self.skip(10000)).grid(row=0, column=2, padx=2)
-        self.time_label = ctk.CTkLabel(bar, text="0:00 / 0:00", width=110, font=font("meta"), text_color=C["text2"])
-        self.time_label.grid(row=0, column=3, padx=SP["sm"])
-        self.seek = ctk.CTkSlider(bar, from_=0, to=1000, number_of_steps=1000, command=self._on_seek_drag)
-        self.seek.set(0)
-        self.seek.grid(row=0, column=4, sticky="ew", padx=SP["sm"])
-        self.seek.bind("<ButtonPress-1>", lambda e: setattr(self, "_dragging", True))
-        self.seek.bind("<ButtonRelease-1>", self._on_seek_release)
-        icon_label(bar, "volume", 14).grid(row=0, column=5, padx=(SP["sm"], 0))
-        self.volume = ctk.CTkSlider(bar, from_=0, to=100, width=100, command=self._on_volume)
-        self.volume.set(80)
-        self.volume.grid(row=0, column=6, padx=(SP["xs"], SP["sm"]))
-        if not self.is_audio:
-            IconButton(bar, "fullscreen", "F", command=self._toggle_fullscreen).grid(row=0, column=7, padx=2)
-        button(bar, t("btn_open_external"), "secondary", self._open_external, kind="body").grid(
-            row=0, column=8, padx=(SP["xs"], SP["md"]))
-
-        # --- atalhos
-        self.bind("<space>", lambda e: self.toggle())
-        self.bind("<Left>", lambda e: self.skip(-5000))
-        self.bind("<Right>", lambda e: self.skip(5000))
-        self.bind("<Escape>", lambda e: self._exit_fullscreen_or_close())
-        self.bind("<f>", lambda e: self._toggle_fullscreen())
-        self.protocol("WM_DELETE_WINDOW", self.close)
-
-        # --- VLC
+        if vlc is None:
+            raise RuntimeError(_load_error or "VLC not available")
+        self.vlc = vlc
         self.instance = vlc.Instance("--no-video-title-show", "--quiet")
-        self.player = self.instance.media_player_new()
-        self.player.set_media(self.instance.media_new(path))
-        self.after(150, self._start)
-
-    # -------------------------------------------------------------- controle
-    def _start(self):
-        if self.video is not None:
-            self.update_idletasks()
-            handle = self.video.winfo_id()
-            if sys.platform == "win32":
-                self.player.set_hwnd(handle)
-            else:
-                self.player.set_xwindow(handle)
-        try:  # deixa cliques e teclas chegarem à janela do app, não ao VLC
-            self.player.video_set_mouse_input(False)
-            self.player.video_set_key_input(False)
+        self.mp = self.instance.media_player_new()
+        try:  # cliques/teclas vão para a janela do app, não para o VLC
+            self.mp.video_set_mouse_input(False)
+            self.mp.video_set_key_input(False)
         except Exception:
             pass
-        self.player.audio_set_volume(int(self.volume.get()))
-        self.player.play()
-        self.focus_force()
-        self._tick()
+        self.queue, self.index = [], -1
+        self.shuffle, self.repeat = False, "off"
+        self.volume = int(volume)
+        self.mp.audio_set_volume(self.volume)
+        self._handle = None
+        self.on_change = on_change or (lambda: None)
 
-    def toggle(self):
-        if self.player.is_playing():
-            self.player.pause()
+    # ---------------------------------------------------------------- estado
+    @property
+    def current(self):
+        return self.queue[self.index] if 0 <= self.index < len(self.queue) else None
+
+    @property
+    def upcoming(self):
+        return self.queue[self.index + 1:] if self.current else list(self.queue)
+
+    def is_playing(self):
+        return bool(self.mp.is_playing())
+
+    def position(self):
+        """(tempo_ms, duração_ms)."""
+        return max(0, self.mp.get_time() or 0), max(0, self.mp.get_length() or 0)
+
+    # ---------------------------------------------------------------- saída de vídeo
+    def set_video_handle(self, handle):
+        """Janela (winfo_id) onde o vídeo é desenhado. Ao trocar, recarrega o vídeo atual no mesmo ponto."""
+        changed = handle != self._handle
+        self._handle = handle
+        if changed and self.current and self.current["kind"] == "video" and self.is_playing():
+            ms = self.position()[0]
+            self._load(start_ms=ms)
+
+    def _attach(self):
+        if self._handle is None:
+            return
+        if sys.platform == "win32":
+            self.mp.set_hwnd(self._handle)
         else:
-            if self._ended():
-                self.player.stop()
-            self.player.play()
+            self.mp.set_xwindow(self._handle)
+
+    # ---------------------------------------------------------------- fila
+    def play_list(self, items, start=0):
+        """Toca uma lista (ex.: a Biblioteca) a partir de um item — substitui a fila."""
+        self.queue = [dict(i) for i in items]
+        self.index = max(0, min(start, len(self.queue) - 1)) if self.queue else -1
+        if self.shuffle and self.queue:
+            self._shuffle_upcoming()
+        self._load()
+
+    def play_now(self, item):
+        """Toca um item agora, mantendo o resto da fila depois dele."""
+        self.queue.insert(self.index + 1, dict(item))
+        self.index += 1
+        self._load()
+
+    def play_next(self, item):
+        """Coloca o item logo depois do atual ("Tocar a seguir")."""
+        self.queue.insert(self.index + 1 if self.current else len(self.queue), dict(item))
+        if self.current is None:
+            self.index = len(self.queue) - 1
+            self._load()
+        else:
+            self.on_change()
+
+    def add(self, items):
+        """Adiciona ao fim da fila. Se nada estiver tocando, começa a tocar."""
+        start_now = self.current is None
+        first = len(self.queue)
+        self.queue.extend(dict(i) for i in items)
+        if start_now and self.queue:
+            self.index = first
+            self._load()
+        else:
+            self.on_change()
+
+    def remove(self, i):
+        if not 0 <= i < len(self.queue):
+            return
+        playing = i == self.index
+        del self.queue[i]
+        if i < self.index:
+            self.index -= 1
+        if playing:
+            if self.index >= len(self.queue):
+                self.index = len(self.queue) - 1
+            if self.current:
+                self._load()
+            else:
+                self.stop(clear=False)
+        self.on_change()
+
+    def move(self, i, j):
+        """Move o item i para a posição j (reordenar a fila)."""
+        if not (0 <= i < len(self.queue) and 0 <= j < len(self.queue)) or i == j:
+            return
+        item = self.queue.pop(i)
+        self.queue.insert(j, item)
+        if self.index == i:
+            self.index = j
+        elif i < self.index <= j:
+            self.index -= 1
+        elif j <= self.index < i:
+            self.index += 1
+        self.on_change()
+
+    def jump(self, i):
+        if 0 <= i < len(self.queue):
+            self.index = i
+            self._load()
+
+    def clear_upcoming(self):
+        if self.current:
+            self.queue = self.queue[:self.index + 1]
+        else:
+            self.queue = []
+        self.on_change()
+
+    # ---------------------------------------------------------------- transporte
+    def toggle(self):
+        if self.current is None:
+            if self.queue:
+                self.index = 0
+                self._load()
+            return
+        if self.is_playing():
+            self.mp.pause()
+        else:
+            if self.mp.get_state() in (self.vlc.State.Ended, self.vlc.State.Stopped):
+                self._load()
+            else:
+                self.mp.play()
+        self.on_change()
+
+    def next(self, auto=False):
+        if not self.queue:
+            return
+        if auto and self.repeat == "one":
+            self._load()
+            return
+        if self.index + 1 < len(self.queue):
+            self.index += 1
+        elif self.repeat == "all":
+            self.index = 0
+        else:
+            if auto:          # fim da fila
+                self.mp.stop()
+                self.on_change()
+            return
+        self._load()
+
+    def prev(self):
+        if self.position()[0] > 3000 or self.index <= 0:
+            self.mp.set_time(0)
+            return
+        self.index -= 1
+        self._load()
+
+    def seek(self, fraction):
+        self.mp.set_position(max(0.0, min(1.0, float(fraction))))
 
     def skip(self, delta_ms):
-        length = self.player.get_length()
+        now, length = self.position()
         if length > 0:
-            self.player.set_time(int(max(0, min(length - 500, self.player.get_time() + delta_ms))))
+            self.mp.set_time(int(max(0, min(length - 500, now + delta_ms))))
 
-    def _ended(self):
-        vlc = load_vlc()
-        return self.player.get_state() == vlc.State.Ended
+    def set_volume(self, value):
+        self.volume = int(value)
+        self.mp.audio_set_volume(self.volume)
 
-    def _on_seek_drag(self, value):
-        self._dragging = True
-        length = self.player.get_length()
-        if length > 0:
-            self.time_label.configure(text=f"{_fmt(length * value / 1000)} / {_fmt(length)}")
+    def toggle_shuffle(self):
+        self.shuffle = not self.shuffle
+        if self.shuffle:
+            self._shuffle_upcoming()
+        self.on_change()
 
-    def _on_seek_release(self, _event=None):
-        self.player.set_position(float(self.seek.get()) / 1000)
-        self._dragging = False
+    def cycle_repeat(self):
+        self.repeat = REPEAT_MODES[(REPEAT_MODES.index(self.repeat) + 1) % len(REPEAT_MODES)]
+        self.on_change()
 
-    def _on_volume(self, value):
-        self.player.audio_set_volume(int(value))
+    def stop(self, clear=True):
+        self.mp.stop()
+        if clear:
+            self.queue, self.index = [], -1
+        self.on_change()
 
-    def _tick(self):
-        if self._closing:
-            return
+    def tick(self):
+        """Chamado pela interface a cada ~250 ms: passa para o próximo item quando o atual termina."""
+        if self.current and self.mp.get_state() == self.vlc.State.Ended:
+            self.next(auto=True)
+
+    def release(self):
         try:
-            length, now = self.player.get_length(), self.player.get_time()
-            if not self._dragging and length > 0:
-                self.seek.set(1000 * now / length)
-                self.time_label.configure(text=f"{_fmt(now)} / {_fmt(length)}")
-            self.play_btn.set_icon("pause" if self.player.is_playing() else "play")
-        except Exception:
-            pass
-        self.after(250, self._tick)
-
-    def _toggle_fullscreen(self):
-        self.attributes("-fullscreen", not self.attributes("-fullscreen"))
-
-    def _exit_fullscreen_or_close(self):
-        if self.attributes("-fullscreen"):
-            self.attributes("-fullscreen", False)
-        else:
-            self.close()
-
-    def _open_external(self):
-        if self.on_open_external:
-            self.player.pause()
-            self.on_open_external(self.path)
-
-    def close(self):
-        self._closing = True
-        try:
-            self.player.stop()
-            self.player.release()
+            self.mp.stop()
+            self.mp.release()
             self.instance.release()
         except Exception:
             pass
-        self.destroy()
+
+    # ---------------------------------------------------------------- internos
+    def _shuffle_upcoming(self):
+        rest = self.queue[self.index + 1:]
+        random.shuffle(rest)
+        self.queue = self.queue[:self.index + 1] + rest
+
+    def _load(self, start_ms=0):
+        item = self.current
+        if item is None:
+            return
+        self.mp.stop()
+        self.mp.set_media(self.instance.media_new(item["path"]))
+        if item["kind"] == "video":
+            self._attach()
+        self.mp.audio_set_volume(self.volume)
+        self.mp.play()
+        if start_ms:
+            self.mp.set_time(int(start_ms))
+        self.on_change()

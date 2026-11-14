@@ -8,7 +8,10 @@
 - VLC: usado pelo player interno.
 Instalação e desinstalação pelo winget.
 """
+import glob
+import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +70,12 @@ def refresh_path() -> None:
 
 def find_vlc_dir():
     """Pasta de instalação do VLC (com libvlc.dll), ou None."""
+    custom = CUSTOM_PATHS.get("vlc")
+    if custom:
+        d = custom if os.path.isdir(custom) else os.path.dirname(custom)
+        if os.path.isfile(os.path.join(d, "libvlc.dll" if sys.platform == "win32" else "vlc")) or \
+                sys.platform != "win32" and os.path.isfile(custom):
+            return d
     candidates = []
     if sys.platform == "win32":
         import winreg
@@ -86,11 +95,134 @@ def find_vlc_dir():
     return os.path.dirname(lib) if lib else None
 
 
+# --------------------------------------------------------------------------- detecção
+# Caminhos escolhidos manualmente pelo usuário (Configurações › Componentes › Localizar).
+# O app preenche a partir de Settings.component_paths.
+CUSTOM_PATHS = {}
+
+WINGET_LINKS = r"%LOCALAPPDATA%\Microsoft\WinGet\Links"
+# Onde procurar o executável REAL quando ele não aparece no PATH. Motivos comuns:
+# - o winget instala ffmpeg/Deno como pacote "portátil" e cria só um link simbólico em
+#   WinGet\Links; alguns Pythons (ex.: o da Microsoft Store) não enxergam esses links;
+# - o PATH do processo é antigo (programa instalado com o app aberto).
+SEARCH = {
+    "ffmpeg": [
+        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe",
+        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\*FFmpeg*\*\bin\ffmpeg.exe",
+        r"%ProgramFiles%\WinGet\Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe",
+        r"%ProgramFiles%\ffmpeg\bin\ffmpeg.exe",
+        r"%SystemDrive%\ffmpeg\bin\ffmpeg.exe",
+        r"%USERPROFILE%\scoop\shims\ffmpeg.exe",
+        r"%ProgramData%\chocolatey\bin\ffmpeg.exe",
+    ],
+    "deno": [
+        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\DenoLand.Deno*\deno.exe",
+        r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\DenoLand.Deno*\*\deno.exe",
+        r"%ProgramFiles%\WinGet\Packages\DenoLand.Deno*\deno.exe",
+        r"%USERPROFILE%\.deno\bin\deno.exe",
+        r"%USERPROFILE%\scoop\shims\deno.exe",
+        r"%ProgramData%\chocolatey\bin\deno.exe",
+    ],
+    "node": [
+        r"%ProgramFiles%\nodejs\node.exe",
+        r"%LOCALAPPDATA%\Programs\nodejs\node.exe",
+        r"%NVM_SYMLINK%\node.exe",
+        r"%SystemDrive%\nvm4w\nodejs\node.exe",
+        r"%USERPROFILE%\scoop\shims\node.exe",
+    ],
+}
+log = logging.getLogger("baixador")
+
+
+def _expand(pattern: str) -> str:
+    """Expande %VAR% (também fora do Windows, para os testes) e ajusta o separador."""
+    out = re.sub(r"%(\w+)%", lambda m: os.environ.get(m.group(1), m.group(0)), pattern)
+    return out if os.sep == "\\" else out.replace("\\", os.sep)
+
+
+def _real_file(path):
+    """Caminho do arquivo real (segue links simbólicos), ou None."""
+    try:
+        if os.path.isfile(path):
+            return path
+        if os.path.islink(path):
+            target = os.path.realpath(path)
+            if os.path.isfile(target):
+                return target
+    except OSError:
+        pass
+    return None
+
+
+def _exe(name):
+    return name + (".exe" if sys.platform == "win32" else "")
+
+
+def _ensure_on_path(exe_path):
+    """Coloca a pasta do executável no PATH do processo (para o yt-dlp e subprocessos)."""
+    folder = os.path.dirname(exe_path)
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if folder and folder not in parts:
+        os.environ["PATH"] = os.pathsep.join([folder] + parts)
+
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0
+
+
+def locate(name: str):
+    """Procura o componente e devolve (caminho, onde_foi_encontrado) ou (None, tentativas)."""
+    tried = []
+    custom = CUSTOM_PATHS.get(name)
+    if custom:
+        found = _real_file(custom)
+        tried.append(("custom", custom, bool(found)))
+        if found:
+            return found, "custom"
+    comp = COMPONENTS.get(name)
+    exe = comp.exe if comp else name
+    found = shutil.which(exe)
+    tried.append(("PATH", exe, bool(found)))
+    if found:
+        return found, "PATH"
+    link = os.path.join(_expand(WINGET_LINKS), _exe(exe))
+    found = _real_file(link)
+    tried.append(("WinGet Links", link, bool(found)))
+    if found:
+        return found, "WinGet Links"
+    for pattern in SEARCH.get(name, []):
+        pat = _expand(pattern)
+        if "%" in pat:      # variável inexistente
+            continue
+        hits = sorted((h for h in glob.glob(pat) if os.path.isfile(h)), key=_mtime, reverse=True)
+        tried.append(("busca", pat, bool(hits)))
+        for h in hits:
+            if os.path.isfile(h):
+                return h, "busca"
+    return None, tried
+
+
 def find(name: str):
     if name == "vlc":
         return find_vlc_dir()
-    comp = COMPONENTS.get(name)
-    return shutil.which(comp.exe if comp else name)
+    path, _how = locate(name)
+    if path:
+        _ensure_on_path(path)
+    return path
+
+
+def diagnose(name: str) -> list:
+    """Linhas de diagnóstico (vão para o registro e para o app.log quando algo não é encontrado)."""
+    path, info = locate(name)
+    if path:
+        return [f"{name}: encontrado em {path} ({info})"]
+    lines = [f"{name}: não encontrado. Python: {sys.executable}"]
+    for how, where, ok in info:
+        lines.append(f"  [{'ok' if ok else '--'}] {how}: {where}")
+    return lines
 
 
 def status() -> dict:

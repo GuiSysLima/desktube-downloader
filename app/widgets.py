@@ -8,7 +8,7 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from . import thumbs
+from . import motion, thumbs
 from .theme import BUTTON_STYLES, C, CONTROL_H, RADIUS, SP, THUMB, font, glyph, icon_font
 
 
@@ -141,8 +141,8 @@ def button(master, text, style="secondary", command=None, width=None, height=CON
     opts = dict(BUTTON_STYLES[style])
     opts.update(kw)
     opts.setdefault("font", font(kind))
-    return ctk.CTkButton(master, text=text, command=command, height=height,
-                         corner_radius=RADIUS["button"], width=width or 0, **opts)
+    opts.setdefault("corner_radius", RADIUS["button"])
+    return ctk.CTkButton(master, text=text, command=command, height=height, width=width or 0, **opts)
 
 
 class IconButton(ctk.CTkButton):
@@ -151,8 +151,9 @@ class IconButton(ctk.CTkButton):
     def __init__(self, master, icon, tooltip="", style="ghost", size=CONTROL_H, icon_size=16, command=None, **kw):
         opts = dict(BUTTON_STYLES[style])
         opts.update(kw)
+        opts.setdefault("corner_radius", RADIUS["button"])
         super().__init__(master, text=glyph(icon), width=size, height=size, font=icon_font(icon_size),
-                         corner_radius=RADIUS["button"], command=command, **opts)
+                         command=command, **opts)
         self.tooltip = Tooltip(self, tooltip) if tooltip else None
 
     def set_icon(self, icon):
@@ -169,7 +170,7 @@ BADGE = {
     "warning": (C["warning_bg"], C["warning"]),
     "error": (C["error_bg"], C["error"]),
     "muted": (C["surface2"], C["text2"]),
-    "accent": (C["accent_soft"], C["accent"]),
+    "accent": (C["accent_soft"], C["accent_text"]),
 }
 
 
@@ -208,10 +209,11 @@ class Card(ctk.CTkFrame):
             except Exception:
                 pass
 
-    def _all_children(self, w):
+    @staticmethod
+    def _all_children(w):
         for c in w.winfo_children():
             yield c
-            yield from self._all_children(c)
+            yield from Card._all_children(c)
 
     def _enter(self, _e=None):
         self.configure(fg_color=C["card_hover"])
@@ -257,6 +259,11 @@ class ThumbBox(ctk.CTkFrame):
             self._path = path
             self.label.configure(image=img, text="")
 
+    def reset(self, audio=False):
+        """Volta ao ícone (sem imagem)."""
+        self._path = None
+        self.label.configure(image="", text=glyph("audio" if audio else "video"))
+
 
 # ---------------------------------------------------------------- aviso flutuante (snackbar)
 class Toast:
@@ -266,20 +273,31 @@ class Toast:
              "error": ("error", C["error"]), "warning": ("warning", C["warning"])}
 
     def __init__(self, parent):
-        self.parent, self.frame, self._job = parent, None, None
+        self.parent, self.frame, self._job, self._kind, self._label = parent, None, None, None, None
 
     def show(self, text, kind="info", ms=4000):
+        # aviso do mesmo tipo já visível (ex.: progresso): só troca o texto, sem animar de novo
+        if self.frame is not None and self._kind == kind and self.frame.winfo_exists():
+            self._label.configure(text=text)
+            if self._job:
+                self.parent.after_cancel(self._job)
+            self._job = self.parent.after(ms, self.hide)
+            return
         self.hide()
+        self._kind = kind
         icon, color = self.KINDS.get(kind, self.KINDS["info"])
         f = ctk.CTkFrame(self.parent, fg_color=C["card"], corner_radius=RADIUS["card"], border_width=1,
                          border_color=color)
         icon_label(f, icon, 16, color).pack(side="left", padx=(SP["md"], SP["sm"]), pady=SP["sm"])
-        ctk.CTkLabel(f, text=text, font=font("body"), wraplength=520, justify="left").pack(
-            side="left", padx=(0, SP["sm"]), pady=SP["sm"])
+        self._label = ctk.CTkLabel(f, text=text, font=font("body"), wraplength=520, justify="left")
+        self._label.pack(side="left", padx=(0, SP["sm"]), pady=SP["sm"])
         IconButton(f, "cancel", size=28, icon_size=10, command=self.hide).pack(side="left", padx=(0, SP["sm"]))
-        f.place(relx=0.5, rely=1.0, y=-SP["lg"], anchor="s")
         f.lift()
         self.frame = f
+        rest, start = -SP["lg"], SP["lg"]       # entra deslizando de baixo (desacelerando)
+        f.place(relx=0.5, rely=1.0, y=start if motion.enabled() else rest, anchor="s")
+        motion.animate(f, "toast", motion.DUR["short"],
+                       lambda p: f.place_configure(y=round(start + (rest - start) * p)))
         self._job = self.parent.after(ms, self.hide)
 
     def hide(self):
@@ -290,11 +308,21 @@ class Toast:
                 pass
             self._job = None
         if self.frame is not None:
+            f, self.frame = self.frame, None
             try:
-                self.frame.destroy()
+                y0 = int(f.place_info().get("y", -SP["lg"]))
             except Exception:
-                pass
-            self.frame = None
+                y0 = -SP["lg"]
+
+            def gone():
+                try:
+                    f.destroy()
+                except Exception:
+                    pass
+            # sai mais rápido do que entrou, acelerando para baixo
+            motion.animate(f, "toast", round(motion.DUR["short"] * motion.EXIT),
+                           lambda p: f.place_configure(y=round(y0 + (SP["xxl"] + SP["lg"]) * p)),
+                           gone, motion.ease_in)
 
 
 # ---------------------------------------------------------------- diálogo de escolha
@@ -354,6 +382,7 @@ class ChoiceDialog(ctk.CTkToplevel):
         x = m.winfo_rootx() + (m.winfo_width() - self.winfo_width()) // 2
         y = m.winfo_rooty() + (m.winfo_height() - self.winfo_height()) // 3
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        motion.fade_in_window(self)
         self.after(50, self._focus)
         self.master.wait_window(self)
         return self.result
@@ -376,4 +405,148 @@ class TextDialog(ctk.CTkToplevel):
         box.configure(state="disabled")
         self.bind("<Escape>", lambda e: self.destroy())
         apply_icon(self)
+        motion.fade_in_window(self)
         self.after(50, self.lift)
+
+
+# ---------------------------------------------------------------- linha de lista com hover
+class HoverRow(ctk.CTkFrame):
+    """Linha de lista (sem borda) que destaca ao passar o mouse — como as listas do Spotify/Windows."""
+
+    def __init__(self, master, base=None, **kw):
+        kw.setdefault("fg_color", "transparent")
+        kw.setdefault("corner_radius", RADIUS["card"])
+        super().__init__(master, **kw)
+        self._normal = kw["fg_color"]
+        self._base = base or C["bg"]          # cor de fundo atrás da linha (para a transição)
+        self._hot = False
+        self.bind("<Enter>", self._enter, add="+")
+        self.bind("<Leave>", self._leave, add="+")
+
+    def bind_children(self, double_click=None, right_click=None):
+        """Propaga hover (e opcionalmente duplo clique / botão direito) para os filhos."""
+        for w in Card._all_children(self):
+            try:
+                w.bind("<Enter>", self._enter, add="+")
+                w.bind("<Leave>", self._leave, add="+")
+                if double_click and not isinstance(w, ctk.CTkButton):
+                    w.bind("<Double-Button-1>", lambda e=None: double_click(), add="+")
+                if right_click:
+                    w.bind("<Button-3>", right_click, add="+")
+            except Exception:
+                pass
+        if double_click:
+            self.bind("<Double-Button-1>", lambda e=None: double_click(), add="+")
+        if right_click:
+            self.bind("<Button-3>", right_click, add="+")
+
+    def _enter(self, _e=None):
+        if self._hot:
+            return
+        self._hot = True
+        motion.fade_color(self, "fg_color", self._base, C["row_hover"], motion.DUR["micro"])
+
+    def _leave(self, _e=None):
+        try:
+            x, y = self.winfo_pointerxy()
+            inside = self.winfo_containing(x, y)
+            while inside is not None:
+                if inside is self:
+                    return
+                inside = inside.master
+        except Exception:
+            pass
+        if not self._hot:
+            return
+        self._hot = False
+        motion.fade_color(self, "fg_color", C["row_hover"], self._base,
+                          round(motion.DUR["micro"] * motion.EXIT), final=self._normal, easing=motion.ease_in)
+
+
+def divider(master):
+    return ctk.CTkFrame(master, height=1, fg_color=C["divider"], corner_radius=0)
+
+
+# ---------------------------------------------------------------- abas sublinhadas
+class TabBar(ctk.CTkFrame):
+    """Abas em texto com sublinhado na aba ativa (no lugar de botões segmentados)."""
+
+    def __init__(self, master, tabs, command):
+        super().__init__(master, fg_color="transparent")
+        self._items, self.command, self._current, self._pos = {}, command, None, None
+        for i, (key, label) in enumerate(tabs):
+            lbl = ctk.CTkLabel(self, text=label, font=font("label"), text_color=C["text2"], cursor="hand2",
+                               width=0, height=26)
+            lbl.grid(row=0, column=i, sticky="w", padx=(0, SP["xl"]))
+            lbl.bind("<Button-1>", lambda e, k=key: self.command(k))
+            self._items[key] = lbl
+        self.grid_rowconfigure(1, minsize=4)
+        # um único sublinhado que desliza até a aba escolhida (continuidade visual)
+        # (tk.Frame: o CTkFrame não aceita largura no place)
+        self.indicator = tk.Frame(self, height=2, bd=0, highlightthickness=0, bg=motion.resolve(C["accent"]))
+
+    def select(self, key):
+        self._current = key
+        self.indicator.configure(bg=motion.resolve(C["accent"]))   # acompanha o tema atual
+        for k, lbl in self._items.items():
+            lbl.configure(text_color=C["text"] if k == key else C["text2"])
+        self._move()
+
+    def _move(self, tries=0):
+        lbl = self._items.get(self._current)
+        if lbl is None:
+            return
+        x, w = lbl.winfo_x(), lbl.winfo_width()
+        if w <= 1:                        # ainda não foi desenhado: tenta de novo em seguida
+            if tries < 20:
+                self.after(30, lambda: self._move(tries + 1))
+            return
+        y = lbl.winfo_y() + lbl.winfo_height() + 1
+        if self._pos is None or not self.indicator.winfo_ismapped():
+            self._pos = (x, w)
+            self.indicator.place(x=x, y=y, width=w, height=2)
+            return
+        x0, w0 = self._pos
+        self._pos = (x, w)
+
+        def step(p):
+            self.indicator.place_configure(x=round(x0 + (x - x0) * p), width=max(1, round(w0 + (w - w0) * p)),
+                                           y=y)
+        motion.animate(self.indicator, "slide", motion.DUR["short"], step)
+
+
+# ---------------------------------------------------------------- grupo de configurações (estilo Windows 11)
+class SettingsGroup(ctk.CTkFrame):
+    """Bloco com linhas "título + descrição | controle", separadas por divisórias finas."""
+
+    def __init__(self, master, title=""):
+        super().__init__(master, fg_color="transparent")
+        self.grid_columnconfigure(0, weight=1)
+        r = 0
+        if title:
+            ctk.CTkLabel(self, text=title, font=font("label"), anchor="w").grid(
+                row=0, column=0, sticky="w", pady=(0, SP["sm"]))
+            r = 1
+        self.box = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=RADIUS["card"])
+        self.box.grid(row=r, column=0, sticky="ew")
+        self.box.grid_columnconfigure(0, weight=1)
+        self._rows = 0
+
+    def add_row(self, title, desc="", wrap=440):
+        """Cria uma linha e devolve (frame_da_direita, label_da_descrição)."""
+        if self._rows:
+            divider(self.box).grid(row=self._rows * 2 - 1, column=0, sticky="ew", padx=SP["lg"])
+        row = ctk.CTkFrame(self.box, fg_color="transparent")
+        row.grid(row=self._rows * 2, column=0, sticky="ew", padx=SP["lg"], pady=SP["md"])
+        row.grid_columnconfigure(0, weight=1)
+        left = ctk.CTkFrame(row, fg_color="transparent")
+        left.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(left, text=title, font=font("body"), anchor="w").pack(anchor="w")
+        d = ctk.CTkLabel(left, text=desc, font=font("meta"), text_color=C["text2"], anchor="w", justify="left",
+                         wraplength=wrap)
+        if desc:
+            d.pack(anchor="w")
+        right = ctk.CTkFrame(row, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="e", padx=(SP["lg"], 0))
+        self._rows += 1
+        return right, d

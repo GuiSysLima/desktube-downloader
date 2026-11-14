@@ -28,17 +28,22 @@ C = {
     "surface2":       ("#E9E9EE", "#2B2D31"),   # botões secundários, trilhos
     "surface2_hover": ("#DEDEE5", "#35373C"),
     "thumb_bg":       ("#E1E1E8", "#1A1B1E"),
+    "divider":        ("#E6E6EB", "#2A2C31"),
+    "row_hover":      ("#EEEEF2", "#26282C"),
+    "player_bar":     ("#FFFFFF", "#1F2023"),
     # texto
     "text":           ("#1B1B1F", "#F2F3F5"),
     "text2":          ("#5F5F66", "#949BA4"),   # secundário/metadados (contraste >= 4.5:1)
     "text_disabled":  ("#A0A0A8", "#5C5F66"),
     # marca
-    "primary":        ("#E11D48", "#E11D48"),   # rosa neon: ação principal (Baixar)
-    "primary_hover":  ("#BE123C", "#F43F5E"),
+    "primary":        ("#F0145A", "#F0145A"),   # rosa neon: ação principal (Baixar)
+    "primary_hover":  ("#D10E4E", "#FF3D7A"),
+    "primary_glow":   ("#F0145A", "#FF5C8A"),   # contorno "neon" do botão principal no tema escuro
     "on_primary":     ("#FFFFFF", "#FFFFFF"),
-    "accent":         ("#7C3AED", "#7C3AED"),   # violeta: progresso, seleção, foco
-    "accent_hover":   ("#6D28D9", "#8B5CF6"),
-    "accent_soft":    ("#EDE7FD", "#2A2140"),   # fundo de item selecionado
+    "accent":         ("#8B3DFF", "#A23BFF"),   # violeta neon: progresso, seleção, foco
+    "accent_hover":   ("#7A2EF0", "#B45CFF"),
+    "accent_text":    ("#7A2EF0", "#C38BFF"),   # violeta para TEXTO (contraste >= 4.5:1 nos dois temas)
+    "accent_soft":    ("#F0E7FF", "#2E1F4D"),   # fundo de item selecionado
     "on_accent":      ("#FFFFFF", "#FFFFFF"),
     # status (sempre acompanhados de ícone/texto, nunca só a cor)
     "success":        ("#1A7F45", "#23A55A"),
@@ -51,32 +56,55 @@ C = {
 }
 
 # ---------------------------------------------------------------- forma e ritmo
-RADIUS = {"button": 8, "input": 8, "card": 12, "thumb": 8, "pill": 999}
+RADIUS = {"button": 6, "input": 6, "card": 8, "thumb": 4, "pill": 999}
 SP = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
-THUMB = (128, 72)          # miniatura 16:9
+THUMB = (96, 54)           # miniatura 16:9 na fila
+THUMB_SM = (64, 36)        # miniatura nas listas (Biblioteca, fila de reprodução)
 CONTROL_H = 36             # altura padrão de botões/campos
-CTA_H = 44                 # altura do campo de link e do botão Baixar
+CTA_H = 40                 # altura do campo de link e do botão Baixar
 
 # ---------------------------------------------------------------- tipografia
 # Segoe UI no Windows. BAIXADOR_FONT permite outra fonte (usado nos testes fora do Windows).
 FONT_FAMILY = os.environ.get("BAIXADOR_FONT", "Segoe UI")
-TYPE = {                     # (tamanho, peso)
-    "title":   (20, "bold"),
-    "section": (15, "bold"),
-    "card":    (14, "bold"),
-    "body":    (13, "normal"),
-    "label":   (13, "bold"),
-    "meta":    (11, "normal"),
-    "caption": (12, "normal"),
+TYPE = {                     # (tamanho, forte?) — "forte" usa Segoe UI Semibold
+    "title":   (24, True),
+    "section": (15, True),
+    "row":     (13, False),     # título de item em listas
+    "label":   (13, True),
+    "body":    (13, False),
+    "meta":    (12, False),
+    "caption": (12, False),
+    "small":   (11, False),
+    # nomes antigos (compatibilidade)
+    "card":    (13, True),
 }
 _fonts = {}
+_strong_family = None
+
+
+def _strong():
+    """Família para texto forte: 'Segoe UI Semibold' se existir (mais natural que bold sintético)."""
+    global _strong_family
+    if _strong_family is None:
+        try:
+            fams = set(tkfont.families())
+        except Exception:
+            fams = set()
+        semibold = FONT_FAMILY + " Semibold"
+        _strong_family = (semibold, "normal") if semibold in fams else (FONT_FAMILY, "bold")
+    return _strong_family
 
 
 def font(kind="body", size=None, weight=None):
-    s, w = TYPE.get(kind, TYPE["body"])
-    key = (size or s, weight or w)
+    s, strong = TYPE.get(kind, TYPE["body"])
+    if weight == "bold":
+        strong = True
+    elif weight == "normal":
+        strong = False
+    fam, w = _strong() if strong else (FONT_FAMILY, "normal")
+    key = (fam, size or s, w)
     if key not in _fonts:
-        _fonts[key] = ctk.CTkFont(family=FONT_FAMILY, size=key[0], weight=key[1])
+        _fonts[key] = ctk.CTkFont(family=fam, size=key[1], weight=w)
     return _fonts[key]
 
 
@@ -89,6 +117,9 @@ GLYPHS = {
     "warning": "\uE7BA", "info": "\uE946", "video": "\uE714", "audio": "\uE8D6", "volume": "\uE767",
     "fullscreen": "\uE740", "back10": "\uEB9E", "fwd10": "\uEB9D", "globe": "\uE774", "theme": "\uE771",
     "puzzle": "\uEA86", "account": "\uE77B", "about": "\uE946", "update": "\uE895", "open": "\uE8A7",
+    "prev": "\uE892", "next": "\uE893", "shuffle": "\uE8B1", "repeat": "\uE8EE", "repeat_one": "\uE8ED",
+    "queue": "\uE8FD", "tag": "\uE8EC", "up": "\uE70E", "down": "\uE70D", "mute": "\uE74F",
+    "nowplaying": "\uE768", "exit_fullscreen": "\uE73F",
 }
 # Sem fonte de ícones (Linux/testes): símbolos de texto simples
 FALLBACK = {
@@ -97,6 +128,8 @@ FALLBACK = {
     "search": "⌕", "check": "✓", "error": "!", "warning": "!", "info": "i", "video": "▣",
     "audio": "♪", "volume": "◖", "fullscreen": "⛶", "back10": "«", "fwd10": "»", "globe": "◍",
     "theme": "◐", "puzzle": "◆", "account": "◉", "about": "i", "update": "↓", "open": "↗",
+    "prev": "◀◀", "next": "▶▶", "shuffle": "⇄", "repeat": "↻", "repeat_one": "↻1", "queue": "≡", "tag": "#",
+    "up": "▲", "down": "▼", "mute": "×", "nowplaying": "♫", "exit_fullscreen": "⇲",
 }
 _icon_family = None
 
@@ -144,7 +177,7 @@ def apply_ctk_theme():
     th["CTk"]["fg_color"] = list(C["bg"])
     th["CTkToplevel"]["fg_color"] = list(C["bg"])
     th["CTkFrame"].update(fg_color=list(C["card"]), top_fg_color=list(C["card_hover"]),
-                          border_color=list(C["card_border"]), corner_radius=RADIUS["card"])
+                          border_color=list(C["card_border"]), corner_radius=RADIUS["card"], border_width=0)
     th["CTkButton"].update(fg_color=list(C["accent"]), hover_color=list(C["accent_hover"]),
                            text_color=list(C["on_accent"]), text_color_disabled=list(C["text_disabled"]),
                            corner_radius=RADIUS["button"], border_color=list(C["input_border"]))
@@ -183,7 +216,8 @@ def apply_ctk_theme():
 
 # ---------------------------------------------------------------- estilos de botão
 BUTTON_STYLES = {
-    "primary":   dict(fg_color=C["primary"], hover_color=C["primary_hover"], text_color=C["on_primary"]),
+    "primary":   dict(fg_color=C["primary"], hover_color=C["primary_hover"], text_color=C["on_primary"],
+                      border_width=1, border_color=C["primary_glow"]),
     "accent":    dict(fg_color=C["accent"], hover_color=C["accent_hover"], text_color=C["on_accent"]),
     "secondary": dict(fg_color=C["surface2"], hover_color=C["surface2_hover"], text_color=C["text"]),
     "ghost":     dict(fg_color="transparent", hover_color=C["surface2"], text_color=C["text"]),

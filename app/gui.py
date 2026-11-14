@@ -1,26 +1,20 @@
 # VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
 # SPDX-License-Identifier: GPL-3.0-only
 # Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
-"""Interface gráfica (CustomTkinter): barra lateral + páginas Baixar, Biblioteca e Configurações.
+"""Janela principal: barra lateral, páginas (app/ui/*) e a barra do player no rodapé.
 
-Regras de arquitetura:
+Regras de arquitetura (ver CLAUDE.md):
 - Cores, fontes, raios e espaçamentos vêm de theme.py; componentes reutilizáveis de widgets.py.
 - Nenhuma thread toca em widgets: o trabalho em segundo plano manda eventos para self.events,
-  que a thread principal processa em _poll() a cada 100 ms.
-- A lógica de download (downloader.py), componentes (deps.py), navegadores (browsers.py),
-  miniaturas (thumbs.py) e player (player.py) é usada sem alterações de assinatura.
+  que a thread principal processa em _poll() a cada 100 ms (ou usa self._bg(func, callback)).
+- As páginas só chamam métodos públicos do App (play_entries, start_download, dep_action...).
 """
-import json
 import logging
 import os
 import queue
-import re
-import subprocess
-import sys
+import random
 import threading
 import time
-import tkinter as tk
-import urllib.request
 import webbrowser
 from dataclasses import asdict
 from logging.handlers import RotatingFileHandler
@@ -28,27 +22,25 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from . import (AUTHOR, COPYRIGHT_YEAR, GITHUB_REPO, PROJECT_URL, __version__, browsers, deps, i18n, player,
-               thumbs)
-from .config import Settings, config_dir, load_history, remove_history, save_history
-from .downloader import QUALITIES, Downloader
+from . import __version__, browsers, covers, deps, i18n, motion, player, thumbs, updater
+from .config import Settings, config_dir, load_history, remove_history, save_history, update_history
+from .downloader import Downloader
 from .fsutil import send_to_trash
 from .i18n import t
-from .theme import BUTTON_STYLES, C, CONTROL_H, CTA_H, RADIUS, SP, apply_ctk_theme, font, glyph
-from .widgets import (ICON_PNG, Card, ChoiceDialog, IconButton, TextDialog, ThumbBox, Toast, apply_icon, badge,
-                      button, flash_window, icon_label, load_image, resource_path, set_badge)
+from .theme import C, RADIUS, SP, apply_ctk_theme, font, icon_font, glyph
+from .ui.common import URL_RE, YT_RE, open_path, split_msg
+from .ui.download import DownloadPage, JobRow
+from .ui.library import LibraryPage, artist_of
+from .ui.playing import PlayerBar, PlayingPage
+from .ui.settings import SettingsPage
+from .widgets import ICON_PNG, ChoiceDialog, Toast, apply_icon, badge, flash_window, icon_label, load_image, \
+    set_badge
 
 log = logging.getLogger("baixador")
 
-URL_RE = re.compile(r"https?://[^\s\"'<>]+")
-YT_RE = re.compile(r"(youtube\.com|youtu\.be)/", re.I)
-VIDEO_Q = ("best", "1080", "720", "480")
-AUDIO_Q = ("mp3", "m4a")
-THEMES = ("system", "light", "dark")
-DEP_ROWS = ("ffmpeg", "deno", "node", "vlc")
-OPTIONAL_DEPS = ("node", "vlc")
-LIB_PAGE = 30                    # itens da Biblioteca desenhados por vez
-SETTINGS_SECTIONS = ("general", "login", "components", "about")
+PAGES = ("download", "library", "playing", "settings")
+TICK_MS = 250
+UPDATE_EVERY = 24 * 3600
 
 
 def setup_logging():
@@ -65,823 +57,105 @@ def setup_logging():
         pass
 
 
-def quality_label(key):
-    return t(f"q_{key}") if key in QUALITIES else str(key)
-
-
-def open_path(path):
-    if not path:
-        return
-    if sys.platform == "win32":
-        os.startfile(path)  # noqa: S606
-    else:
-        subprocess.Popen(["xdg-open", path])
-
-
-def reveal(path, fallback_dir=""):
-    if path and os.path.exists(path):
-        if sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
-            return
-        path = os.path.dirname(path)
-    target = path if path and os.path.isdir(path) else fallback_dir
-    if target:
-        os.makedirs(target, exist_ok=True)
-        open_path(target)
-
-
-def version_tuple(v):
-    nums = re.findall(r"\d+", v or "")
-    return tuple(int(n) for n in nums[:3]) or (0,)
-
-
-def split_msg(key, **kw):
-    """Mensagens no formato "Pergunta?\\n\\nExplicação" -> (título, texto)."""
-    head, _, rest = t(key, **kw).partition("\n")
-    return head.strip(), rest.strip()
-
-
 # =========================================================================== barra lateral
 class NavItem(ctk.CTkFrame):
     def __init__(self, master, app, key, icon, label):
-        super().__init__(master, fg_color="transparent", corner_radius=RADIUS["button"], height=40, cursor="hand2")
+        super().__init__(master, fg_color="transparent", corner_radius=RADIUS["button"], height=38, cursor="hand2")
         self.app, self.key, self.selected = app, key, False
         self.grid_propagate(False)
-        self.grid_columnconfigure(2, weight=1)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        self.bar = ctk.CTkFrame(self, width=3, height=18, corner_radius=2, fg_color="transparent")
-        self.bar.grid(row=0, column=0, padx=(SP["xs"], 0))
-        self.icon = icon_label(self, icon, 16)
-        self.icon.grid(row=0, column=1, padx=SP["md"])
-        self.text = ctk.CTkLabel(self, text=label, font=font("label"), anchor="w", text_color=C["text2"])
-        self.text.grid(row=0, column=2, sticky="ew")
+        self.icon = icon_label(self, icon, 15)
+        self.icon.grid(row=0, column=0, padx=(SP["md"], SP["md"]))
+        self.text = ctk.CTkLabel(self, text=label, font=font("body"), anchor="w", text_color=C["text2"])
+        self.text.grid(row=0, column=1, sticky="ew")
         self.count = badge(self, "0", "accent")
-        for w in (self, self.icon, self.text, self.bar):
+        for w in (self, self.icon, self.text):
             w.bind("<Button-1>", lambda e: app.show_page(key))
             w.bind("<Enter>", lambda e: self._hover(True))
             w.bind("<Leave>", lambda e: self._hover(False))
 
     def _hover(self, on):
         if not self.selected:
-            self.configure(fg_color=C["surface2"] if on else "transparent")
+            if on:
+                motion.fade_color(self, "fg_color", C["sidebar"], C["row_hover"], motion.DUR["micro"])
+            else:
+                motion.fade_color(self, "fg_color", C["row_hover"], C["sidebar"],
+                                  round(motion.DUR["micro"] * motion.EXIT), final="transparent",
+                                  easing=motion.ease_in)
+            self.text.configure(text_color=C["text"] if on else C["text2"])
 
     def set_selected(self, on):
-        self.selected = on
-        self.configure(fg_color=C["accent_soft"] if on else "transparent")
-        self.bar.configure(fg_color=C["accent"] if on else "transparent")
-        self.icon.configure(text_color=C["accent"] if on else C["text2"])
-        self.text.configure(text_color=C["text"] if on else C["text2"])
+        was, self.selected = self.selected, on
+        if on and not was:          # item escolhido "acende" (transição curta)
+            motion.fade_color(self, "fg_color", C["sidebar"], C["surface2"], motion.DUR["short"])
+        elif not on:
+            motion.cancel(self, "color:fg_color")
+            self.configure(fg_color="transparent")
+        self.icon.configure(text_color=C["accent_text"] if on else C["text2"])
+        self.text.configure(text_color=C["text"] if on else C["text2"], font=font("label" if on else "body"))
 
     def set_count(self, n):
         if n:
             set_badge(self.count, str(n), "accent")
-            self.count.grid(row=0, column=3, padx=(0, SP["sm"]))
+            self.count.grid(row=0, column=2, padx=(0, SP["sm"]))
         else:
             self.count.grid_remove()
 
 
 class Sidebar(ctk.CTkFrame):
     def __init__(self, app):
-        super().__init__(app, fg_color=C["sidebar"], corner_radius=0, width=232)
+        super().__init__(app, fg_color=C["sidebar"], corner_radius=0, width=216)
+        self.app = app
         self.grid_propagate(False)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(4, weight=1)
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=SP["lg"], pady=SP["xl"])
-        logo = load_image(ICON_PNG, (40, 40))
+        head.grid(row=0, column=0, sticky="ew", padx=SP["lg"], pady=(SP["xl"], SP["lg"]))
+        logo = load_image(ICON_PNG, (28, 28))
         if logo is not None:
             ctk.CTkLabel(head, image=logo, text="").pack(side="left")
-        brand = ctk.CTkFrame(head, fg_color="transparent")
-        brand.pack(side="left", padx=(SP["sm"], 0))
-        ctk.CTkLabel(brand, text=t("app_name"), font=font("title", size=18), anchor="w").pack(anchor="w")
-        ctk.CTkLabel(brand, text=t("app_tagline"), font=font("meta"), text_color=C["text2"], anchor="w",
-                     justify="left", wraplength=140).pack(anchor="w")
+        ctk.CTkLabel(head, text=t("app_name"), font=font("title", size=18), anchor="w").pack(
+            side="left", padx=(SP["sm"], 0))
         self.items = {}
-        for i, (key, icon, label) in enumerate((("download", "download", t("nav_download")),
-                                                ("library", "library", t("nav_library")),
-                                                ("settings", "settings", t("nav_settings")))):
-            item = NavItem(self, app, key, icon, label)
-            item.grid(row=1 + i, column=0, sticky="ew", padx=SP["sm"], pady=2)
+        nav = ctk.CTkFrame(self, fg_color="transparent")
+        nav.grid(row=1, column=0, sticky="ew", padx=SP["sm"])
+        nav.grid_columnconfigure(0, weight=1)
+        for i, (key, icon) in enumerate((("download", "download"), ("library", "library"),
+                                         ("playing", "nowplaying"))):
+            item = NavItem(nav, app, key, icon, t(f"nav_{key}"))
+            item.grid(row=i, column=0, sticky="ew", pady=1)
             self.items[key] = item
-        ctk.CTkLabel(self, text=t("version", v=__version__), font=font("meta"), text_color=C["text2"]).grid(
-            row=6, column=0, sticky="w", padx=SP["lg"], pady=SP["lg"])
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.grid(row=5, column=0, sticky="ew", padx=SP["sm"])
+        bottom.grid_columnconfigure(0, weight=1)
+        item = NavItem(bottom, app, "settings", "settings", t("nav_settings"))
+        item.grid(row=0, column=0, sticky="ew")
+        self.items["settings"] = item
+
+        # rodapé: ícone + versão, centralizados; clicar abre Configurações › Sobre
+        self.update_note = ctk.CTkLabel(self, text="", font=font("small"), text_color=C["accent_text"], cursor="hand2")
+        foot = ctk.CTkFrame(self, fg_color="transparent", cursor="hand2")
+        foot.grid(row=7, column=0, pady=(SP["md"], SP["lg"]))
+        self.ver_icon = ctk.CTkLabel(foot, text=glyph("tag"), font=icon_font(12), text_color=C["text2"])
+        self.ver_icon.pack(side="left", padx=(0, SP["xs"] + 2))
+        self.ver = ctk.CTkLabel(foot, text=t("version", v=__version__), font=font("meta"), text_color=C["text2"])
+        self.ver.pack(side="left")
+        for w in (foot, self.ver_icon, self.ver):
+            w.bind("<Button-1>", lambda e: app.show_page("settings", "about"))
+        self.update_note.bind("<Button-1>", lambda e: app.show_update_dialog())
 
     def select(self, key):
         for k, item in self.items.items():
             item.set_selected(k == key)
 
-
-# =========================================================================== página Baixar
-class JobCard(Card):
-    def __init__(self, master, app, job):
-        super().__init__(master)
-        self.app, self.job, self._indeterminate = app, job, False
-        self.grid_columnconfigure(1, weight=1)
-        self.thumb = ThumbBox(self, audio=job["quality"] in AUDIO_Q)
-        self.thumb.grid(row=0, column=0, rowspan=3, padx=SP["md"], pady=SP["md"])
-        self.title = ctk.CTkLabel(self, text=job["url"], font=font("card"), anchor="w")
-        self.title.grid(row=0, column=1, sticky="sew", pady=(SP["md"], 0))
-        self.bar = ctk.CTkProgressBar(self, height=6, mode="determinate")
-        self.bar.set(0)
-        self.bar.grid(row=1, column=1, sticky="ew", pady=SP["sm"])
-        info = ctk.CTkFrame(self, fg_color="transparent")
-        info.grid(row=2, column=1, sticky="new", pady=(0, SP["md"]))
-        info.grid_columnconfigure(1, weight=1)
-        self.status_icon = icon_label(info, "info", 12)
-        self.status = ctk.CTkLabel(info, text="", font=font("meta"), text_color=C["text2"], anchor="w",
-                                   justify="left", wraplength=440)
-        self.status.grid(row=0, column=1, sticky="w")
-        self.speed = ctk.CTkLabel(info, text="", font=font("meta"), text_color=C["text2"], anchor="e")
-        self.speed.grid(row=0, column=2, sticky="e", padx=(SP["sm"], 0))
-        acts = ctk.CTkFrame(self, fg_color="transparent")
-        acts.grid(row=0, column=2, rowspan=3, padx=SP["md"])
-        self.play_btn = IconButton(acts, "play", t("tip_play"), "accent", command=self._play)
-        self.folder_btn = IconButton(acts, "folder", t("tip_folder"), command=self._folder)
-        self.action_btn = IconButton(acts, "cancel", t("tip_cancel"), command=self._action)
-        self.action_btn.pack(side="left", padx=2)
-        self.bind_children_hover()
-        self.update_job(job)
-
-    def _set_bar(self, mode, value=None, color=None):
-        if mode == "indeterminate" and not self._indeterminate:
-            self.bar.configure(mode="indeterminate")
-            self.bar.start()
-            self._indeterminate = True
-        elif mode == "determinate":
-            if self._indeterminate:
-                self.bar.stop()
-                self.bar.configure(mode="determinate")
-                self._indeterminate = False
-            if value is not None:
-                self.bar.set(value)
-        self.bar.configure(progress_color=color or C["accent"])
-
-    def _status(self, text, icon=None, color=None):
-        self.status.configure(text=text, text_color=color or C["text2"])
-        if icon:
-            self.status_icon.configure(text=glyph(icon), text_color=color or C["text2"])
-            self.status_icon.grid(row=0, column=0, padx=(0, SP["xs"]))
+    def set_update(self, tag):
+        """Mostra "vX disponível" acima da versão quando há atualização (checagem automática)."""
+        if tag:
+            self.update_note.configure(text=t("update_badge", tag=tag))
+            self.update_note.grid(row=6, column=0, pady=(SP["md"], 0))
         else:
-            self.status_icon.grid_remove()
-
-    def update_job(self, job):
-        self.job = job
-        title = job["title"] or job["url"]
-        self.title.configure(text=title if len(title) <= 80 else title[:77] + "...")
-        if job.get("thumb"):
-            self.thumb.set_path(job["thumb"])
-        state, quality = job["state"], quality_label(job["quality"])
-        item = t("item_n", n=job["item"]) if job["item"] else ""
-        speed = ""
-        if state == "downloading" and job["status"] == "st_starting":
-            self._set_bar("indeterminate")
-            self._status(t("st_starting"))
-        elif state == "downloading":
-            self._set_bar("determinate", job["progress"])
-            self._status("  •  ".join(x for x in (t(job["status"]), f"{job['progress'] * 100:.0f}%", item) if x))
-            speed = "  •  ".join(x for x in (job["speed"], t("eta", eta=job["eta"]) if job["eta"] else "") if x)
-        elif state == "processing":
-            self._set_bar("indeterminate")
-            self._status(t(job["status"]))
-        elif state == "done":
-            self._set_bar("determinate", 1, C["success"])
-            self._status(f"{t(job['status'])}  •  {quality}", "check", C["success"])
-        elif state == "error":
-            self._set_bar("determinate", 0, C["error"])
-            args = dict(job.get("error_args") or {})
-            if job["error"] == "err_cookie_copy" and not args.get("browser"):
-                args["browser"] = t("the_browser")
-            self._status(t(job["error"], **args), "error", C["error"])
-        elif state == "cancelled":
-            self._set_bar("determinate", 0)
-            self._status(t("st_cancelled"), "cancel")
-        else:
-            self._set_bar("determinate", 0)
-            self._status(f"{t('st_queued')}  •  {quality}")
-        self.speed.configure(text=speed)
-
-        playable = state == "done" and bool(job.get("filepath")) and os.path.isfile(job["filepath"])
-        for b in (self.play_btn, self.folder_btn, self.action_btn):
-            b.pack_forget()
-        if playable:
-            self.play_btn.pack(side="left", padx=2)
-            self.folder_btn.pack(side="left", padx=2)
-            self.thumb.on_click(self._play)
-        if state in ("queued", "downloading", "processing"):
-            self.action_btn.set_icon("cancel")
-            self.action_btn.tooltip.set_text(t("tip_remove") if state == "queued" else t("tip_cancel"))
-            self.action_btn.pack(side="left", padx=2)
-        elif state in ("error", "cancelled"):
-            self.action_btn.set_icon("retry")
-            self.action_btn.tooltip.set_text(t("tip_retry"))
-            self.action_btn.pack(side="left", padx=2)
-
-    def _play(self):
-        self.app.play_media(self.job["filepath"], self.job["title"], self.job.get("thumb"))
-
-    def _folder(self):
-        reveal(self.job["filepath"], self.app.settings.output_dir)
-
-    def _action(self):
-        if self.job["state"] in ("queued", "downloading", "processing"):
-            self.app.downloader.cancel(self.job["id"])
-        else:
-            j = self.job
-            self.app.remove_job_card(j["id"])
-            self.app.enqueue([j["url"]], j["quality"], j["playlist"], j["subtitles"])
-
-
-class DownloadPage(ctk.CTkFrame):
-    def __init__(self, master, app):
-        super().__init__(master, fg_color="transparent")
-        self.app = app
-        s = app.settings
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
-
-        ctk.CTkLabel(self, text=t("nav_download"), font=font("title"), anchor="w").grid(
-            row=0, column=0, sticky="ew")
-        ctk.CTkLabel(self, text=t("dl_subtitle"), font=font("body"), text_color=C["text2"], anchor="w").grid(
-            row=1, column=0, sticky="ew", pady=(0, SP["lg"]))
-
-        # --- link + opções
-        card = Card(self, hover=False)
-        card.grid(row=2, column=0, sticky="ew")
-        card.grid_columnconfigure(1, weight=1)
-        icon_label(card, "link", 16).grid(row=0, column=0, padx=(SP["lg"], SP["sm"]), pady=(SP["lg"], 0))
-        self.url = ctk.CTkEntry(card, height=CTA_H, font=font("body", size=14), placeholder_text=t("url_placeholder"))
-        self.url.grid(row=0, column=1, sticky="ew", pady=(SP["lg"], 0))
-        self.url.bind("<Return>", lambda e: app.start_download())
-        self.url.bind("<FocusIn>", lambda e: self.url.configure(border_color=C["accent"]))
-        self.url.bind("<FocusOut>", lambda e: self.url.configure(border_color=C["input_border"]))
-        self.url.bind("<KeyRelease>", lambda e: self.show_error(""))
-        IconButton(card, "paste", t("tip_paste"), "secondary", size=CTA_H, command=self.paste).grid(
-            row=0, column=2, padx=(SP["sm"], 0), pady=(SP["lg"], 0))
-        button(card, t("btn_download"), "primary", app.start_download, width=140, height=CTA_H,
-               font=font("label", size=14)).grid(row=0, column=3, padx=(SP["sm"], SP["lg"]), pady=(SP["lg"], 0))
-        self.error = ctk.CTkLabel(card, text="", font=font("caption"), text_color=C["error"], anchor="w")
-
-        opts = ctk.CTkFrame(card, fg_color="transparent")
-        opts.grid(row=2, column=0, columnspan=4, sticky="ew", padx=SP["lg"], pady=(SP["md"], SP["lg"]))
-        self.kind = ctk.CTkSegmentedButton(opts, values=[t("seg_video"), t("seg_audio")], height=CONTROL_H,
-                                           font=font("label"), command=self._on_kind)
-        self.kind.pack(side="left")
-        self.quality = ctk.CTkOptionMenu(opts, width=190, height=CONTROL_H, font=font("body"),
-                                         command=self._on_quality)
-        self.quality.pack(side="left", padx=(SP["sm"], 0))
-        self.playlist = ctk.CTkSwitch(opts, text=t("chk_playlist"), font=font("body"), command=self._on_option)
-        self.playlist.pack(side="left", padx=(SP["xl"], 0))
-        self.subs = ctk.CTkSwitch(opts, text=t("chk_subtitles"), font=font("body"), command=self._on_option)
-        self.subs.pack(side="left", padx=(SP["lg"], 0))
-        (self.playlist.select if s.playlist else self.playlist.deselect)()
-        (self.subs.select if s.subtitles else self.subs.deselect)()
-        self.login = button(opts, "", "ghost", lambda: app.show_page("settings", "login"), kind="body",
-                            text_color=C["text2"])
-        self.login.pack(side="right")
-        self._sync_quality_widgets()
-        self.refresh_login()
-
-        # --- faixa de componentes faltando
-        self.banner = ctk.CTkFrame(self, fg_color=C["warning_bg"], corner_radius=RADIUS["card"])
-        icon_label(self.banner, "warning", 16, C["warning"]).pack(side="left", padx=(SP["lg"], SP["sm"]),
-                                                                   pady=SP["md"])
-        self.banner_text = ctk.CTkLabel(self.banner, text="", font=font("body"), anchor="w", justify="left",
-                                        wraplength=560)
-        self.banner_text.pack(side="left", fill="x", expand=True, pady=SP["md"])
-        self.banner_btn = button(self.banner, t("btn_install_now"), "accent", app.install_missing)
-        self.banner_btn.pack(side="right", padx=SP["lg"])
-
-        # --- fila
-        head = ctk.CTkFrame(self, fg_color="transparent")
-        head.grid(row=4, column=0, sticky="ew", pady=(SP["xl"], SP["sm"]))
-        ctk.CTkLabel(head, text=t("queue_title"), font=font("section")).pack(side="left")
-        self.count = badge(head, "0", "muted")
-        button(head, t("btn_clear_finished"), "ghost", app.clear_finished, kind="body").pack(side="right")
-        self.list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.list.grid(row=5, column=0, sticky="nsew")
-        self.list.grid_columnconfigure(0, weight=1)
-        self.empty = ctk.CTkFrame(self.list, fg_color="transparent")
-        icon_label(self.empty, "download", 40, C["text2"]).pack(pady=(SP["xxl"], SP["md"]))
-        ctk.CTkLabel(self.empty, text=t("queue_empty_title"), font=font("section")).pack()
-        ctk.CTkLabel(self.empty, text=t("queue_empty_text"), font=font("body"), text_color=C["text2"]).pack(
-            pady=(SP["xs"], 0))
-        ctk.CTkLabel(self.empty, text=t("queue_empty_hint"), font=font("caption"), text_color=C["text2"],
-                     wraplength=460).pack(pady=(SP["md"], 0))
-        self.empty.grid(row=0, column=0, pady=SP["xl"])
-
-        # --- pasta de destino
-        folder = Card(self, hover=False)
-        folder.grid(row=6, column=0, sticky="ew", pady=(SP["md"], 0))
-        folder.grid_columnconfigure(2, weight=1)
-        icon_label(folder, "folder", 16).grid(row=0, column=0, padx=(SP["lg"], SP["sm"]), pady=SP["md"])
-        ctk.CTkLabel(folder, text=t("save_to"), font=font("label")).grid(row=0, column=1, padx=(0, SP["sm"]))
-        self.folder = ctk.CTkLabel(folder, text="", font=font("body"), text_color=C["text2"], anchor="w")
-        self.folder.grid(row=0, column=2, sticky="ew")
-        button(folder, t("btn_open"), "ghost", lambda: reveal("", app.settings.output_dir), kind="body").grid(
-            row=0, column=3, padx=SP["xs"])
-        button(folder, t("btn_change_folder"), "secondary", app.choose_output, kind="body").grid(
-            row=0, column=4, padx=(SP["xs"], SP["lg"]), pady=SP["md"])
-        self.refresh_folder()
-
-    # ---- opções
-    def _sync_quality_widgets(self):
-        q = self.app.settings.quality if self.app.settings.quality in QUALITIES else "best"
-        audio = q in AUDIO_Q
-        self.kind.set(t("seg_audio") if audio else t("seg_video"))
-        keys = AUDIO_Q if audio else VIDEO_Q
-        self.quality.configure(values=[t(f"qs_{k}") for k in keys])
-        self.quality.set(t(f"qs_{q}"))
-
-    def _on_kind(self, label):
-        audio = label == t("seg_audio")
-        if audio != (self.app.settings.quality in AUDIO_Q):
-            self.app.settings.quality = "mp3" if audio else "best"
-            self.app.save()
-        self._sync_quality_widgets()
-
-    def _on_quality(self, label):
-        for k in QUALITIES:
-            if t(f"qs_{k}") == label:
-                self.app.settings.quality = k
-        self.app.save()
-
-    def _on_option(self):
-        self.app.settings.playlist = bool(self.playlist.get())
-        self.app.settings.subtitles = bool(self.subs.get())
-        self.app.save()
-
-    def refresh_login(self):
-        s, b = self.app.settings, browsers.BROWSERS.get(self.app.settings.browser)
-        if b:
-            text = t("login_browser", name=b.label)
-        elif s.browser == "file" and s.cookies_file:
-            text = t("login_file")
-        else:
-            text = t("login_none")
-        self.login.configure(text=text.replace("⚙", "").strip() + "  ›")
-
-    def refresh_folder(self):
-        p = self.app.settings.output_dir
-        self.folder.configure(text=p if len(p) <= 70 else "..." + p[-67:])
-
-    # ---- link
-    def paste(self):
-        try:
-            text = self.app.clipboard_get().strip()
-        except Exception:
-            return
-        self.url.delete(0, "end")
-        self.url.insert(0, text)
-        self.url.focus_set()
-        self.show_error("")
-
-    def show_error(self, text):
-        if text:
-            self.error.configure(text=text)
-            self.error.grid(row=1, column=1, columnspan=3, sticky="w", pady=(SP["xs"], 0))
-            self.url.configure(border_color=C["error"])
-        elif self.error.winfo_ismapped():
-            self.error.grid_remove()
-            self.url.configure(border_color=C["accent"] if self.url.focus_get() is self.url else C["input_border"])
-
-    def set_banner(self, text, busy):
-        if text:
-            self.banner_text.configure(text=text)
-            self.banner_btn.configure(state="disabled" if busy else "normal")
-            self.banner.grid(row=3, column=0, sticky="ew", pady=(SP["md"], 0))
-        else:
-            self.banner.grid_remove()
-
-    def set_count(self, n):
-        if n:
-            set_badge(self.count, str(n), "muted")
-            self.count.pack(side="left", padx=SP["sm"])
-        else:
-            self.count.pack_forget()
-
-
-# =========================================================================== página Biblioteca
-class LibraryPage(ctk.CTkFrame):
-    def __init__(self, master, app):
-        super().__init__(master, fg_color="transparent")
-        self.app = app
-        self._search_job = None
-        self._limit = LIB_PAGE
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
-        head = ctk.CTkFrame(self, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew")
-        ctk.CTkLabel(head, text=t("nav_library"), font=font("title")).pack(side="left")
-        self.count = badge(head, "0", "muted")
-        self.count.pack(side="left", padx=SP["sm"])
-        button(head, t("btn_clear_history"), "danger_ghost", app.clear_history, kind="body").pack(side="right")
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.grid(row=1, column=0, sticky="ew", pady=SP["md"])
-        icon_label(bar, "search", 14).pack(side="left", padx=(0, SP["sm"]))
-        self.search = ctk.CTkEntry(bar, height=CONTROL_H, width=360, placeholder_text=t("hist_search"))
-        self.search.pack(side="left")
-        self.search.bind("<KeyRelease>", self._on_search)
-        self.list = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.list.grid(row=2, column=0, sticky="nsew")
-        self.list.grid_columnconfigure(0, weight=1)
-        self.refresh()
-
-    def _on_search(self, _e=None):
-        if self._search_job:
-            self.after_cancel(self._search_job)
-        self._search_job = self.after(250, self._apply_search)  # debounce: espera parar de digitar
-
-    def _apply_search(self):
-        self._search_job = None
-        self._limit = LIB_PAGE
-        self.refresh()
-
-    def refresh(self):
-        for w in self.list.winfo_children():
-            w.destroy()
-        self.app._thumb_boxes = {}
-        all_items = load_history()
-        q = self.search.get().strip().lower()
-        items = [h for h in all_items if not q or q in (h.get("title", "") + h.get("url", "")).lower()]
-        set_badge(self.count, str(len(all_items)), "muted")
-        if not items:
-            self._empty(q)
-            return
-        for i, h in enumerate(items[:self._limit]):
-            self._row(i, h)
-        if len(items) > self._limit:
-            button(self.list, t("btn_load_more", n=len(items) - self._limit), "secondary", self._more,
-                   kind="body").grid(row=self._limit, column=0, pady=SP["md"])
-
-    def _more(self):
-        self._limit += LIB_PAGE
-        self.refresh()
-
-    def _empty(self, query):
-        f = ctk.CTkFrame(self.list, fg_color="transparent")
-        f.grid(row=0, column=0, pady=SP["xxl"])
-        icon_label(f, "search" if query else "library", 40, C["text2"]).pack(pady=(SP["xl"], SP["md"]))
-        if query:
-            ctk.CTkLabel(f, text=t("hist_no_results", q=query), font=font("section")).pack()
-        else:
-            ctk.CTkLabel(f, text=t("hist_empty_title"), font=font("section")).pack()
-            ctk.CTkLabel(f, text=t("hist_empty_text"), font=font("body"), text_color=C["text2"]).pack(
-                pady=(SP["xs"], 0))
-
-    def _row(self, i, h):
-        app = self.app
-        card = Card(self.list)
-        card.grid(row=i, column=0, sticky="ew", pady=(0, SP["sm"]))
-        card.grid_columnconfigure(1, weight=1)
-        path = h.get("filepath", "")
-        exists = bool(path) and os.path.isfile(path)
-        box = ThumbBox(card, audio=h.get("quality") in AUDIO_Q)
-        box.grid(row=0, column=0, rowspan=2, padx=SP["md"], pady=SP["md"])
-        app.show_history_thumb(box, h, path, exists)
-        title = h.get("title") or h.get("url", "")
-        ctk.CTkLabel(card, text=title if len(title) <= 90 else title[:87] + "...", font=font("card"),
-                     anchor="w").grid(row=0, column=1, sticky="sew", pady=(SP["md"], 0))
-        meta = ctk.CTkFrame(card, fg_color="transparent")
-        meta.grid(row=1, column=1, sticky="new", pady=(SP["xs"], SP["md"]))
-        ctk.CTkLabel(meta, text=f"{h.get('when', '')}  •  {quality_label(h.get('quality', ''))}", font=font("meta"),
-                     text_color=C["text2"]).pack(side="left")
-        if path and not exists:
-            badge(meta, t("hist_missing_file"), "warning").pack(side="left", padx=SP["sm"])
-        acts = ctk.CTkFrame(card, fg_color="transparent")
-        acts.grid(row=0, column=2, rowspan=2, padx=SP["md"])
-        play = (lambda p=path, e=h: app.play_media(p, e.get("title", ""), e.get("thumb"))) if exists else None
-        pb = IconButton(acts, "play", t("tip_play"), "accent", command=play)
-        if not exists:
-            pb.configure(state="disabled", fg_color=C["surface2"])
-        pb.pack(side="left", padx=2)
-        IconButton(acts, "folder", t("tip_folder"),
-                   command=lambda p=path, d=h.get("folder", ""): reveal(p, d or app.settings.output_dir)).pack(
-            side="left", padx=2)
-        more = IconButton(acts, "more", t("tip_more"))
-        more.configure(command=lambda b=more, e=h: self._menu(b, e))
-        more.pack(side="left", padx=2)
-        if play:
-            box.on_click(play)
-        card.bind_children_hover()
-
-    def _menu(self, widget, entry):
-        dark = ctk.get_appearance_mode() == "Dark"
-        m = tk.Menu(self, tearoff=0, bg="#2B2D31" if dark else "#FFFFFF", fg="#F2F3F5" if dark else "#1B1B1F",
-                    activebackground="#7C3AED", activeforeground="#FFFFFF", bd=0,
-                    font=(font("body").cget("family"), 10))
-        m.add_command(label=t("btn_redownload"), command=lambda: self.app.redownload(entry))
-        m.add_command(label=t("menu_open_folder"),
-                      command=lambda: reveal(entry.get("filepath", ""),
-                                             entry.get("folder") or self.app.settings.output_dir))
-        m.add_separator()
-        m.add_command(label=t("menu_delete"), command=lambda: self.app.delete_entry(entry),
-                      foreground="#F23F43" if dark else "#C42B30")
-        try:
-            m.tk_popup(widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height())
-        finally:
-            m.grab_release()
-
-
-# =========================================================================== página Configurações
-def section_card(parent, icon, title, desc=""):
-    card = Card(parent, hover=False)
-    card.grid_columnconfigure(0, weight=1)
-    head = ctk.CTkFrame(card, fg_color="transparent")
-    head.grid(row=0, column=0, sticky="ew", padx=SP["lg"], pady=(SP["lg"], 0))
-    icon_label(head, icon, 16, C["accent"]).pack(side="left", padx=(0, SP["sm"]))
-    ctk.CTkLabel(head, text=title, font=font("section")).pack(side="left")
-    if desc:
-        ctk.CTkLabel(card, text=desc, font=font("caption"), text_color=C["text2"], anchor="w", justify="left",
-                     wraplength=640).grid(row=1, column=0, sticky="ew", padx=SP["lg"], pady=(SP["xs"], 0))
-    body = ctk.CTkFrame(card, fg_color="transparent")
-    body.grid(row=2, column=0, sticky="ew", padx=SP["lg"], pady=(SP["md"], SP["lg"]))
-    body.grid_columnconfigure(1, weight=1)
-    return card, body
-
-
-class SettingsPage(ctk.CTkFrame):
-    def __init__(self, master, app):
-        super().__init__(master, fg_color="transparent")
-        self.app = app
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
-        ctk.CTkLabel(self, text=t("nav_settings"), font=font("title"), anchor="w").grid(row=0, column=0, sticky="ew")
-        self._labels = {k: t(f"set_{k}") for k in SETTINGS_SECTIONS}
-        self.nav = ctk.CTkSegmentedButton(self, values=list(self._labels.values()), height=CONTROL_H,
-                                          font=font("label"), command=self._on_nav)
-        self.nav.grid(row=1, column=0, sticky="w", pady=(SP["md"], SP["lg"]))
-        self.sections = {}
-        for key in SETTINGS_SECTIONS:
-            frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
-            frame.grid_columnconfigure(0, weight=1)
-            self.sections[key] = frame
-            getattr(self, f"_build_{key}")(frame)
-        self.show("general")
-
-    def _on_nav(self, label):
-        self.show(next(k for k, v in self._labels.items() if v == label))
-
-    def show(self, key):
-        for k, f in self.sections.items():
-            if k == key:
-                f.grid(row=2, column=0, sticky="nsew")
-            else:
-                f.grid_remove()
-        self.nav.set(self._labels[key])
-
-    # ---- Geral
-    def _build_general(self, p):
-        app, s = self.app, self.app.settings
-        card, body = section_card(p, "globe", t("sec_language"))
-        card.grid(row=0, column=0, sticky="ew", pady=(0, SP["md"]))
-        ctk.CTkLabel(body, text=t("language_label"), font=font("body")).grid(row=0, column=0, sticky="w")
-        lang = ctk.CTkOptionMenu(body, values=list(i18n.LANGUAGES.values()), width=220, height=CONTROL_H,
-                                 command=app.change_language)
-        lang.set(i18n.LANGUAGES[i18n.current()])
-        lang.grid(row=0, column=1, sticky="w", padx=SP["md"])
-
-        card, body = section_card(p, "theme", t("sec_theme"))
-        card.grid(row=1, column=0, sticky="ew", pady=(0, SP["md"]))
-        self._themes = {t(f"theme_{k}"): k for k in THEMES}
-        seg = ctk.CTkSegmentedButton(body, values=list(self._themes), height=CONTROL_H, command=self._on_theme)
-        seg.set(t(f"theme_{s.theme if s.theme in THEMES else 'system'}"))
-        seg.grid(row=0, column=0, sticky="w")
-
-        card, body = section_card(p, "folder", t("sec_folder"), t("sec_folder_desc"))
-        card.grid(row=2, column=0, sticky="ew", pady=(0, SP["md"]))
-        self.out = ctk.CTkEntry(body, height=CONTROL_H)
-        self.out.insert(0, s.output_dir)
-        self.out.grid(row=0, column=0, columnspan=2, sticky="ew")
-        self.out.bind("<FocusOut>", lambda e: app.set_output(self.out.get()))
-        button(body, t("btn_choose"), "secondary", app.choose_output, kind="body").grid(
-            row=0, column=2, padx=(SP["sm"], 0))
-
-        card, body = section_card(p, "download", t("sec_options"))
-        card.grid(row=3, column=0, sticky="ew", pady=(0, SP["md"]))
-        self.switches = {}
-        for r, (key, attr) in enumerate((("opt_metadata", "embed_metadata"), ("opt_thumbnail", "embed_thumbnail"),
-                                         ("opt_clipboard", "watch_clipboard"))):
-            sw = ctk.CTkSwitch(body, text=t(key), font=font("body"), command=self._on_options)
-            (sw.select if getattr(s, attr) else sw.deselect)()
-            sw.grid(row=r, column=0, columnspan=3, sticky="w", pady=SP["xs"])
-            self.switches[attr] = sw
-        ctk.CTkLabel(body, text=t("sub_langs_label"), font=font("body")).grid(row=3, column=0, sticky="w",
-                                                                            pady=(SP["sm"], 0))
-        self.langs = ctk.CTkEntry(body, width=200, height=CONTROL_H)
-        self.langs.insert(0, s.sub_langs)
-        self.langs.grid(row=3, column=1, sticky="w", padx=SP["md"], pady=(SP["sm"], 0))
-        self.langs.bind("<FocusOut>", lambda e: self._on_options())
-
-    def _on_theme(self, label):
-        self.app.settings.theme = self._themes.get(label, "system")
-        ctk.set_appearance_mode(self.app.settings.theme)
-        self.app.save()
-
-    def _on_options(self):
-        s = self.app.settings
-        for attr, sw in self.switches.items():
-            setattr(s, attr, bool(sw.get()))
-        s.sub_langs = self.langs.get().strip() or "pt.*,en.*"
-        self.app.save()
-
-    def set_output_text(self, path):
-        if self.out.get().strip() != path:
-            self.out.delete(0, "end")
-            self.out.insert(0, path)
-
-    # ---- Login
-    def _build_login(self, p):
-        app, s = self.app, self.app.settings
-        card, body = section_card(p, "account", t("sec_login"), t("sec_login_desc"))
-        card.grid(row=0, column=0, sticky="ew")
-        installed = browsers.installed_keys()
-        self._browsers = {t("browser_none"): "none"}
-        for k, b in browsers.BROWSERS.items():
-            self._browsers[f"{b.label}  {t('detected')}" if k in installed else b.label] = k
-        self._browsers[t("browser_file")] = "file"
-        ctk.CTkLabel(body, text=t("browser_label"), font=font("body")).grid(row=0, column=0, sticky="w")
-        self.browser = ctk.CTkOptionMenu(body, values=list(self._browsers), width=260, height=CONTROL_H,
-                                         command=self._on_browser)
-        self.browser.set(next((lbl for lbl, k in self._browsers.items() if k == s.browser), t("browser_none")))
-        self.browser.grid(row=0, column=1, sticky="w", padx=SP["md"])
-        button(body, t("btn_test_login"), "accent", app.test_login, kind="body").grid(row=0, column=2, sticky="e")
-        self.cookie_label = ctk.CTkLabel(body, text=t("file_label"), font=font("body"))
-        self.cookie = ctk.CTkEntry(body, height=CONTROL_H, placeholder_text=t("cookie_placeholder"))
-        self.cookie.insert(0, s.cookies_file)
-        self.cookie.bind("<FocusOut>", lambda e: self._set_cookie(self.cookie.get()))
-        self.cookie_btn = button(body, t("btn_choose"), "secondary", self._choose_cookie, kind="body")
-        self.result = ctk.CTkFrame(body, fg_color="transparent")
-        self.result_icon = icon_label(self.result, "info", 14)
-        self.result_text = ctk.CTkLabel(self.result, text="", font=font("body"), anchor="w", justify="left",
-                                        wraplength=600)
-        self.result_text.pack(side="left")
-        tip = ctk.CTkFrame(body, fg_color=C["surface2"], corner_radius=RADIUS["button"])
-        tip.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(SP["md"], 0))
-        icon_label(tip, "info", 14, C["accent"]).pack(side="left", anchor="n", padx=(SP["md"], SP["sm"]),
-                                                      pady=SP["md"])
-        self.tip = ctk.CTkLabel(tip, text="", font=font("caption"), anchor="w", justify="left", wraplength=600)
-        self.tip.pack(side="left", fill="x", expand=True, pady=SP["md"], padx=(0, SP["md"]))
-        self._update_cookie_widgets()
-
-    def _on_browser(self, label):
-        self.app.settings.browser = self._browsers.get(label, "none")
-        self.set_login_result(None)
-        self._update_cookie_widgets()
-        self.app.pages["download"].refresh_login()
-        self.app.save()
-
-    def _update_cookie_widgets(self):
-        """O campo do cookies.txt só aparece quando essa opção é escolhida."""
-        if self.app.settings.browser == "file":
-            self.cookie_label.grid(row=1, column=0, sticky="w", pady=(SP["md"], 0))
-            self.cookie.grid(row=1, column=1, sticky="ew", padx=SP["md"], pady=(SP["md"], 0))
-            self.cookie_btn.grid(row=1, column=2, sticky="e", pady=(SP["md"], 0))
-        else:
-            for w in (self.cookie_label, self.cookie, self.cookie_btn):
-                w.grid_remove()
-        self.tip.configure(text=self.app.login_tip_text())
-
-    def _set_cookie(self, path):
-        self.app.settings.cookies_file = path.strip()
-        self.app.pages["download"].refresh_login()
-        self.app.save()
-
-    def _choose_cookie(self):
-        path = filedialog.askopenfilename(filetypes=[("Cookies", "*.txt"), (t("all_files"), "*.*")])
-        if path:
-            path = os.path.normpath(path)
-            self.cookie.delete(0, "end")
-            self.cookie.insert(0, path)
-            self._set_cookie(path)
-
-    def set_login_result(self, ok, text=""):
-        if text:
-            self.result.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(SP["md"], 0))
-        else:
-            self.result.grid_remove()
-        if ok is None:
-            self.result_icon.pack_forget()
-            self.result_text.configure(text=text, text_color=C["text2"])
-            return
-        color = C["success"] if ok else C["error"]
-        self.result_icon.configure(text=glyph("check" if ok else "error"), text_color=color)
-        self.result_icon.pack(side="left", padx=(0, SP["sm"]), before=self.result_text)
-        self.result_text.configure(text=text, text_color=color)
-
-    # ---- Componentes
-    def _build_components(self, p):
-        app = self.app
-        self.dep = {}
-        for i, name in enumerate(DEP_ROWS):
-            card = Card(p, hover=False)
-            card.grid(row=1 + i, column=0, sticky="ew", pady=(0, SP["sm"]))
-            card.grid_columnconfigure(1, weight=1)
-            icon_label(card, "puzzle", 18, C["accent"]).grid(row=0, column=0, rowspan=3, padx=SP["lg"],
-                                                             pady=SP["md"])
-            top = ctk.CTkFrame(card, fg_color="transparent")
-            top.grid(row=0, column=1, sticky="ew", pady=(SP["md"], 0))
-            ctk.CTkLabel(top, text=deps.COMPONENTS[name].label, font=font("card")).pack(side="left")
-            b = badge(top, "", "muted")
-            b.pack(side="left", padx=SP["sm"])
-            ctk.CTkLabel(card, text=t(f"dep_desc_{name}"), font=font("caption"), text_color=C["text2"], anchor="w",
-                         justify="left", wraplength=520).grid(row=1, column=1, sticky="ew", pady=(SP["xs"], SP["md"]))
-            path = ctk.CTkLabel(card, text="", font=font("meta"), text_color=C["text2"], anchor="w")
-            btn = button(card, t("btn_install"), "accent", lambda n=name: app.dep_action(n), kind="body", width=120)
-            btn.grid(row=0, column=2, rowspan=3, padx=SP["lg"])
-            self.dep[name] = (b, path, btn)
-        foot = ctk.CTkFrame(p, fg_color="transparent")
-        foot.grid(row=10, column=0, sticky="ew", pady=(SP["sm"], 0))
-        ctk.CTkLabel(foot, text=f"yt-dlp {deps.ytdlp_version()}", font=font("meta"), text_color=C["text2"]).pack(
-            side="left")
-        button(foot, t("btn_recheck"), "ghost", app.refresh_deps, kind="body").pack(side="right")
-        self.log_card, body = section_card(p, "info", t("log_title"))
-        self.log = ctk.CTkTextbox(body, height=130, font=ctk.CTkFont(family="Consolas", size=11))
-        self.log.grid(row=0, column=0, columnspan=3, sticky="ew")
-        self.log.configure(state="disabled")
-
-    def update_deps(self, status, busy):
-        for name, (b, path_lbl, btn) in self.dep.items():
-            path = status.get(name)
-            if path:
-                set_badge(b, t("badge_installed"), "success")
-                path_lbl.configure(text=path)
-                path_lbl.grid(row=2, column=1, sticky="ew", pady=(0, SP["md"]))
-                btn.configure(text=t("btn_uninstall"), **BUTTON_STYLES["danger_ghost"])
-            else:
-                optional = name in OPTIONAL_DEPS
-                set_badge(b, t("badge_optional") if optional else t("badge_missing"), "muted" if optional else "error")
-                path_lbl.grid_remove()
-                btn.configure(text=t("btn_install"), **BUTTON_STYLES["accent"])
-            btn.configure(state="disabled" if busy else "normal")
-
-    def log_line(self, line):
-        if not self.log_card.winfo_ismapped():
-            self.log_card.grid(row=11, column=0, sticky="ew", pady=(SP["md"], 0))
-        self.log.configure(state="normal")
-        self.log.insert("end", line + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
-
-    # ---- Sobre
-    def _build_about(self, p):
-        app = self.app
-        project = f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else PROJECT_URL
-        # --- marca
-        card = Card(p, hover=False)
-        card.grid(row=0, column=0, sticky="ew")
-        card.grid_columnconfigure(1, weight=1)
-        logo = load_image(ICON_PNG, (72, 72))
-        if logo is not None:
-            ctk.CTkLabel(card, image=logo, text="").grid(row=0, column=0, rowspan=3, padx=SP["xl"], pady=SP["xl"])
-        ctk.CTkLabel(card, text=t("app_name"), font=font("title"), anchor="w").grid(
-            row=0, column=1, sticky="sw", pady=(SP["xl"], 0))
-        ctk.CTkLabel(card, text=t("version", v=__version__) + f"  •  yt-dlp {deps.ytdlp_version()}",
-                     font=font("body"), text_color=C["text2"], anchor="w").grid(row=1, column=1, sticky="w")
-        ctk.CTkLabel(card, text=t("app_tagline") + ". " + t("about_text"), font=font("caption"),
-                     text_color=C["text2"], anchor="w", justify="left", wraplength=520).grid(
-            row=2, column=1, sticky="nw", pady=(SP["xs"], SP["xl"]))
-        row = ctk.CTkFrame(p, fg_color="transparent")
-        row.grid(row=1, column=0, sticky="w", pady=SP["md"])
-        b = button(row, t("btn_check_updates"), "accent", app.check_updates, kind="body")
-        b.pack(side="left")
-        if not GITHUB_REPO:   # build local sem repositório: sem como checar atualizações
-            b.configure(state="disabled", fg_color=C["surface2"], text_color_disabled=C["text_disabled"])
-        button(row, t("btn_project_page"), "secondary", lambda: webbrowser.open(project), kind="body").pack(
-            side="left", padx=SP["sm"])
-        button(row, t("btn_open_log"), "ghost", lambda: open_path(os.path.join(config_dir(), "app.log")),
-               kind="body").pack(side="left", padx=SP["sm"])
-
-        # --- licença e créditos (avisos legais exigidos pela GPL-3.0; o crédito ao autor é
-        #     obrigatório pelos termos adicionais da seção 7(b) — ver NOTICE)
-        lic, body = section_card(p, "info", t("sec_license"))
-        lic.grid(row=2, column=0, sticky="ew", pady=(SP["sm"], 0))
-        ctk.CTkLabel(body, text=f"© {COPYRIGHT_YEAR} {AUTHOR}", font=font("label"), anchor="w").grid(
-            row=0, column=0, columnspan=3, sticky="w")
-        link = ctk.CTkLabel(body, text=f"VidNeon by {AUTHOR}  —  {PROJECT_URL}", font=font("caption"),
-                            text_color=C["accent"], anchor="w", cursor="hand2")
-        link.grid(row=1, column=0, columnspan=3, sticky="w")
-        link.bind("<Button-1>", lambda e: webbrowser.open(PROJECT_URL))
-        ctk.CTkLabel(body, text=t("legal_notice"), font=font("caption"), text_color=C["text2"], anchor="w",
-                     justify="left", wraplength=640).grid(row=2, column=0, columnspan=3, sticky="w", pady=(SP["sm"], 0))
-        ctk.CTkLabel(body, text=t("third_party"), font=font("caption"), text_color=C["text2"], anchor="w",
-                     justify="left", wraplength=640).grid(row=3, column=0, columnspan=3, sticky="w", pady=(SP["sm"], 0))
-        btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=4, column=0, columnspan=3, sticky="w", pady=(SP["md"], 0))
-        button(btns, t("btn_view_license"), "secondary", lambda: self._show_text("LICENSE", t("btn_view_license")),
-               kind="body").pack(side="left")
-        button(btns, t("btn_view_notice"), "secondary", lambda: self._show_text("NOTICE", t("btn_view_notice")),
-               kind="body").pack(side="left", padx=SP["sm"])
-
-    def _show_text(self, filename, title):
-        """Mostra LICENSE/NOTICE numa janela de leitura (o arquivo vai junto no .exe)."""
-        path = resource_path(filename)
-        try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            webbrowser.open("https://www.gnu.org/licenses/gpl-3.0.html" if filename == "LICENSE" else PROJECT_URL)
-            return
-        TextDialog(self.app, f"{t('app_name')} — {title}", text)
+            self.update_note.grid_remove()
 
 
 # =========================================================================== janela principal
@@ -890,70 +164,91 @@ class App(ctk.CTk):
         setup_logging()
         deps.refresh_path()
         self.settings = Settings.load()
+        deps.CUSTOM_PATHS.update(self.settings.component_paths or {})
+        motion.set_enabled(self.settings.animations)
         i18n.set_language(self.settings.language or i18n.detect_default())
         apply_ctk_theme()
         ctk.set_appearance_mode(self.settings.theme)
         super().__init__()
-        self.geometry("1120x740")
-        self.minsize(920, 620)
+        self.geometry("1180x760")
+        self.minsize(980, 640)
         apply_icon(self)
         self.report_callback_exception = self._on_tk_error
 
         self.events = queue.Queue()
         self.downloader = Downloader(lambda: self.settings, self.events)
-        self.cards, self.hidden_jobs = {}, set()
+        self.rows, self.hidden_jobs = {}, set()
         self._last_clip, self._installing, self._page = "", False, "download"
-        self._player_win = None
         self._thumb_boxes, self._thumb_pending, self._thumb_queue = {}, set(), queue.Queue()
+        self._diag_logged, self._update_info, self._updating = set(), None, False
+        self.playback, self._fullscreen, self._pb_after = None, False, None
+        self._last_path, self._lib_dirty = None, False
         threading.Thread(target=self._thumb_worker, daemon=True).start()
-        self.sidebar = self.content = None
+        self.sidebar = self.content = self.bar = None
 
         self._build_ui()
         self.bind("<FocusIn>", self._on_focus)
         self.bind("<Control-v>", self._shortcut_paste)
         self.bind("<Control-V>", self._shortcut_paste)
         self.bind("<Control-l>", lambda e: self._focus_url())
-        for i, key in enumerate(("download", "library", "settings"), start=1):
+        self.bind("<space>", self._shortcut_space)
+        self.bind("<Escape>", lambda e: self._fullscreen and self.toggle_fullscreen(False))
+        self.bind("<F11>", lambda e: self.toggle_fullscreen())
+        for i, key in enumerate(PAGES, start=1):
             self.bind(f"<Control-Key-{i}>", lambda e, k=key: self.show_page(k))
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._poll)
+        self.after(TICK_MS, self._tick)
         self.after(400, self.refresh_deps)
+        self.after(3000, self._auto_update_check)
 
     # ------------------------------------------------------------------ estrutura
     def _build_ui(self):
-        self.title(f"{t('app_name')}  {__version__}")
-        for w in (self.sidebar, self.content):
+        self.title(t("app_name"))
+        for w in (self.sidebar, self.content, self.bar):
             if w is not None:
                 w.destroy()
+        self.configure(fg_color=C["bg"])
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         self.sidebar = Sidebar(self)
-        self.sidebar.grid(row=0, column=0, sticky="nsw")
+        self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsw")
         self.content = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
-        self.pages = {"download": DownloadPage(self.content, self)}
-        self.pages["library"] = LibraryPage(self.content, self)
-        self.pages["settings"] = SettingsPage(self.content, self)
+        self.pages = {"download": DownloadPage(self.content, self),
+                      "library": LibraryPage(self.content, self),
+                      "playing": PlayingPage(self.content, self),
+                      "settings": SettingsPage(self.content, self)}
+        self.bar = PlayerBar(self, self)
         self.toast = Toast(self.content)
-        self.cards = {}
+        self.rows = {}
         for jid in sorted(self.downloader.jobs):
             if jid not in self.hidden_jobs:
-                self._ensure_card(asdict(self.downloader.jobs[jid]))
+                self._ensure_row(asdict(self.downloader.jobs[jid]))
         self._update_counts()
+        if self.playback:
+            self.playback.set_video_handle(self.pages["playing"].video_handle())
+        if self._update_info:
+            self.sidebar.set_update(self._update_info["tag"])
+        self._apply_playback_change()
         self.show_page(self._page)
 
     def show_page(self, key, section=None):
         self._page = key
+        pad = (0, 0) if self._fullscreen else (SP["xxl"], SP["xl"])
         for k, p in self.pages.items():
             if k == key:
-                p.grid(row=0, column=0, sticky="nsew", padx=SP["xxl"], pady=SP["xl"])
+                p.grid(row=0, column=0, sticky="nsew", padx=pad[0], pady=pad[1])
             else:
                 p.grid_remove()
         self.sidebar.select(key)
         if key == "settings" and section:
             self.pages["settings"].show(section)
+        if key == "library" and self._lib_dirty:
+            self._lib_dirty = False
+            self.pages["library"].refresh()
 
     def change_language(self, label):
         code = next((c for c, name in i18n.LANGUAGES.items() if name == label), i18n.DEFAULT)
@@ -984,6 +279,10 @@ class App(ctk.CTk):
             self.events.put(("call", (callback, result)))
         threading.Thread(target=work, daemon=True).start()
 
+    def _typing(self):
+        focus = self.focus_get()
+        return focus is not None and focus.winfo_class() in ("Entry", "Text", "TEntry")
+
     # ------------------------------------------------------------------ baixar
     def _focus_url(self):
         self.show_page("download")
@@ -991,8 +290,7 @@ class App(ctk.CTk):
 
     def _shortcut_paste(self, event=None):
         """Ctrl+V fora de um campo de texto: cola o link e já começa a baixar."""
-        focus = self.focus_get()
-        if focus is not None and focus.winfo_class() in ("Entry", "Text", "TEntry"):
+        if self._typing():
             return None
         self.show_page("download")
         self.pages["download"].paste()
@@ -1020,7 +318,6 @@ class App(ctk.CTk):
             return
         s = self.settings
         quality, playlist, subs = s.quality, s.playlist, s.subtitles
-
         page.show_error("")
 
         def go():
@@ -1065,46 +362,45 @@ class App(ctk.CTk):
     def enqueue(self, urls, quality, playlist, subtitles, overwrite=False):
         for url in urls:
             job = self.downloader.add(url, quality, playlist, subtitles, overwrite=overwrite)
-            self._ensure_card(asdict(job))
+            self._ensure_row(asdict(job))
         self._update_counts()
 
-    def _ensure_card(self, job):
+    def _ensure_row(self, job):
         if job["id"] in self.hidden_jobs:
             return
-        card = self.cards.get(job["id"])
+        row = self.rows.get(job["id"])
         page = self.pages["download"]
-        if card is None:
+        if row is None:
             page.empty.grid_remove()
-            card = JobCard(page.list, self, job)
-            self.cards[job["id"]] = card
+            self.rows[job["id"]] = JobRow(page.list, self, job)
             self._regrid()
         else:
-            card.update_job(job)
+            row.update_job(job)
 
     def _regrid(self):
         page = self.pages["download"]
-        for i, jid in enumerate(sorted(self.cards, reverse=True)):
-            self.cards[jid].grid(row=i + 1, column=0, sticky="ew", pady=(0, SP["sm"]))
-        if not self.cards:
-            page.empty.grid(row=0, column=0, pady=SP["xl"])
+        for i, jid in enumerate(sorted(self.rows, reverse=True)):
+            self.rows[jid].grid(row=i + 1, column=0, sticky="ew", pady=(0, 2))
+        if not self.rows:
+            page.empty.grid(row=0, column=0, pady=SP["xxl"])
 
     def remove_job_card(self, job_id):
         self.hidden_jobs.add(job_id)
-        card = self.cards.pop(job_id, None)
-        if card:
-            card.destroy()
+        row = self.rows.pop(job_id, None)
+        if row:
+            row.destroy()
         self._regrid()
         self._update_counts()
 
     def clear_finished(self):
-        for jid, card in list(self.cards.items()):
-            if card.job["state"] in ("done", "error", "cancelled"):
+        for jid, row in list(self.rows.items()):
+            if row.job["state"] in ("done", "error", "cancelled"):
                 self.remove_job_card(jid)
 
     def _update_counts(self):
         active = sum(1 for j in self.downloader.jobs.values() if j.state in ("queued", "downloading", "processing"))
         self.sidebar.items["download"].set_count(active)
-        self.pages["download"].set_count(len(self.cards))
+        self.pages["download"].set_count(len(self.rows))
 
     # ------------------------------------------------------------------ pasta
     def set_output(self, path):
@@ -1149,35 +445,6 @@ class App(ctk.CTk):
                 result = None
             self.events.put(("thumb_ready", (key, result)))
 
-    def play_media(self, path, title="", thumb=None):
-        if not path or not os.path.isfile(path):
-            self.toast.show(t("player_file_missing"), "warning")
-            return
-        if not player.available():
-            choice = ChoiceDialog(self, t("app_name"), t("vlc_heading"), t("vlc_msg"),
-                                  [(t("btn_cancel"), None, "secondary"),
-                                   (t("btn_open_external"), "external", "secondary"),
-                                   (t("btn_install_vlc"), "install", "primary")], icon="play").show()
-            if choice == "external":
-                open_path(path)
-            elif choice == "install":
-                if deps.has_winget():
-                    self.run_dep_task("install", ["vlc"])
-                    self.toast.show(t("player_vlc_installing"), "info", 6000)
-                else:
-                    webbrowser.open(deps.COMPONENTS["vlc"].site)
-            return
-        if self._player_win is not None and self._player_win.winfo_exists():
-            self._player_win.close()
-        try:
-            cover = load_image(thumb, (320, 180)) if thumb else None
-            self._player_win = player.PlayerWindow(self, path, title, cover, on_open_external=open_path)
-            apply_icon(self._player_win)
-        except Exception as e:
-            log.exception("player")
-            self.toast.show(t("player_error", err=e).split("\n")[0], "error")
-            open_path(path)
-
     def redownload(self, entry):
         url, quality = entry.get("url"), entry.get("quality", "best")
         if not url:
@@ -1191,7 +458,7 @@ class App(ctk.CTk):
             if choice is None:
                 return
             if choice == "play":
-                self.play_media(path, entry.get("title", ""), entry.get("thumb"))
+                self.play_entries([entry], 0)
                 return
             overwrite = True
 
@@ -1213,6 +480,7 @@ class App(ctk.CTk):
         if choice is None:
             return
         if choice == "file":
+            self._drop_from_queue(path)      # o VLC trava o arquivo enquanto toca
             try:
                 send_to_trash(path)
             except Exception as e:
@@ -1233,6 +501,239 @@ class App(ctk.CTk):
                         icon="delete", icon_color=C["error"]).show():
             save_history([])
             self.pages["library"].refresh()
+
+    # ---- capas
+    def change_cover(self, entries, playlist_name=None, folder=""):
+        """Troca a capa de uma playlist (playlist_name) ou de um item."""
+        path = filedialog.askopenfilename(title=t("cover_choose_title"),
+                                          filetypes=[(t("images"), " ".join(covers.IMAGE_TYPES)),
+                                                     (t("all_files"), "*.*")])
+        if not path:
+            return
+        embeddable = [e for e in entries if covers.can_embed(e.get("filepath", ""))]
+        if playlist_name:
+            buttons = [(t("btn_cancel"), None, "secondary"), (t("btn_cover_playlist"), "playlist", "secondary"),
+                       (t("btn_cover_all"), "all", "primary")]
+            choice = ChoiceDialog(self, t("app_name"), t("cover_heading_playlist", name=playlist_name),
+                                  t("cover_msg_playlist"), buttons, detail=path, icon="library").show()
+        else:
+            buttons = [(t("btn_cancel"), None, "secondary"), (t("btn_cover_app"), "app", "secondary")]
+            if embeddable:
+                buttons.append((t("btn_cover_file"), "file", "primary"))
+            choice = ChoiceDialog(self, t("app_name"), t("cover_heading_item"), t("cover_msg_item"),
+                                  buttons, detail=path, icon="library").show()
+        if not choice:
+            return
+        embed = choice in ("all", "file")
+        playing = self.now_playing_path()
+        targets = [e for e in embeddable if e.get("filepath") != playing] if embed else []
+        out = os.path.normcase(os.path.normpath(self.settings.output_dir))
+        use_folder = folder if playlist_name and folder and os.path.normcase(os.path.normpath(folder)) != out else ""
+        ids = {e.get("id") for e in entries if e.get("id")}
+        paths = {e.get("filepath") for e in entries if e.get("filepath")}
+        self.toast.show(t("cover_applying"), "info", 60000)
+
+        def progress(i, n):
+            self.events.put(("toast", (t("cover_embedding", i=i, n=n), "info")))
+
+        def work():
+            return covers.apply(path, targets, use_folder, embed_files=embed, on_progress=progress)
+
+        def done(result):
+            if not result:
+                self.toast.show(t("cover_failed"), "error")
+                return
+            thumb = result["thumb"]
+            match = lambda h: h.get("id") in ids or h.get("filepath") in paths  # noqa: E731
+            if choice == "playlist":
+                update_history(match, playlist_cover=thumb)
+            elif choice == "all":
+                update_history(match, playlist_cover=thumb, thumb=thumb, custom_thumb=True)
+            else:
+                update_history(match, thumb=thumb, custom_thumb=True)
+            if choice != "playlist" and self.playback:
+                for item in self.playback.queue:
+                    if item["path"] in paths:
+                        item["thumb"] = thumb
+                self._on_playback_change()
+            msg = t("cover_done")
+            if embed:
+                msg += " " + t("cover_embedded", n=result["embedded"])
+                if result["failed"] or len(targets) < len(embeddable):
+                    msg += " " + t("cover_skipped", n=result["failed"] + len(embeddable) - len(targets))
+            self.toast.show(msg, "success", 6000)
+            self.pages["library"].refresh()
+        self._bg(work, done)
+
+    # ------------------------------------------------------------------ player
+    def _vlc_missing(self, path=""):
+        choice = ChoiceDialog(self, t("app_name"), t("vlc_heading"), t("vlc_msg"),
+                              [(t("btn_cancel"), None, "secondary"),
+                               (t("btn_open_external"), "external", "secondary"),
+                               (t("btn_install_vlc"), "install", "primary")], icon="play").show()
+        if choice == "external" and path:
+            open_path(path)
+        elif choice == "install":
+            if deps.has_winget():
+                self.run_dep_task("install", ["vlc"])
+                self.toast.show(t("player_vlc_installing"), "info", 6000)
+            else:
+                webbrowser.open(deps.COMPONENTS["vlc"].site)
+
+    def _ensure_playback(self, path=""):
+        if self.playback is not None:
+            return self.playback
+        if not player.available():
+            self._vlc_missing(path)
+            return None
+        try:
+            pb = player.Playback(on_change=self._on_playback_change, volume=self.settings.volume)
+        except Exception as e:
+            log.exception("player")
+            self.toast.show(t("player_error", err=e).split("\n")[0], "error")
+            if path:
+                open_path(path)
+            return None
+        pb.set_video_handle(self.pages["playing"].video_handle())
+        self.playback = pb
+        return pb
+
+    @staticmethod
+    def entry_thumb(entry):
+        """Miniatura do item: a gravada no histórico ou a gerada do arquivo (cache)."""
+        thumb = entry.get("thumb")
+        if thumb and os.path.isfile(thumb):
+            return thumb
+        path = entry.get("filepath")
+        return thumbs.cached(thumbs.key_for("file:" + path)) if path else None
+
+    def _item(self, entry):
+        return player.make_item(entry["filepath"], entry.get("title", ""), self.entry_thumb(entry),
+                                entry.get("quality", ""), artist_of(entry))
+
+    def _after_start(self, pb):
+        cur = pb.current
+        if cur and cur["kind"] == "video":
+            self.show_page("playing")
+
+    def play_entries(self, entries, start=0, shuffle=False):
+        """Toca itens da Biblioteca (a fila vira essa lista, como no Spotify)."""
+        entries = [e for e in entries if e.get("filepath") and os.path.isfile(e["filepath"])]
+        if not entries:
+            self.toast.show(t("player_file_missing"), "warning")
+            return
+        pb = self._ensure_playback(entries[min(start, len(entries) - 1)]["filepath"])
+        if pb is None:
+            return
+        items = [self._item(e) for e in entries]
+        if shuffle:
+            pb.shuffle = True
+            start = random.randrange(len(items))
+        pb.play_list(items, start)
+        self._after_start(pb)
+
+    def play_file(self, path, title="", thumb=None, quality=""):
+        """Toca um arquivo recém-baixado (fila de downloads), mantendo o resto da fila depois dele."""
+        if not path or not os.path.isfile(path):
+            self.toast.show(t("player_file_missing"), "warning")
+            return
+        pb = self._ensure_playback(path)
+        if pb is None:
+            return
+        entry = next((h for h in load_history() if h.get("filepath") == path), None) or \
+            {"filepath": path, "title": title, "thumb": thumb, "quality": quality}
+        pb.play_now(self._item(entry))
+        self._after_start(pb)
+
+    def queue_entry(self, entry, next_=False):
+        pb = self._ensure_playback(entry.get("filepath", ""))
+        if pb is None:
+            return
+        if next_:
+            pb.play_next(self._item(entry))
+            self.toast.show(t("queued_next"), "success", 2000)
+        else:
+            pb.add([self._item(entry)])
+            self.toast.show(t("queued_end"), "success", 2000)
+
+    def queue_entries(self, entries):
+        entries = [e for e in entries if e.get("filepath") and os.path.isfile(e["filepath"])]
+        if not entries:
+            return
+        pb = self._ensure_playback(entries[0]["filepath"])
+        if pb is not None:
+            pb.add([self._item(e) for e in entries])
+            self.toast.show(t("queued_n", n=len(entries)), "success", 2000)
+
+    def now_playing_path(self):
+        cur = self.playback.current if self.playback else None
+        return cur["path"] if cur else None
+
+    def _drop_from_queue(self, path):
+        pb = self.playback
+        if not pb or not path:
+            return
+        for i in reversed(range(len(pb.queue))):
+            if pb.queue[i]["path"] == path:
+                pb.remove(i)
+
+    def _on_playback_change(self):
+        """Chamado pelo motor a cada mudança; junta várias mudanças seguidas num redesenho só."""
+        if self._pb_after is None:
+            self._pb_after = self.after(30, self._apply_playback_change)
+
+    def _apply_playback_change(self):
+        self._pb_after = None
+        pb = self.playback
+        has_queue = bool(pb and pb.queue)
+        if has_queue and not self._fullscreen:
+            self.bar.grid(row=1, column=1, sticky="ew", padx=SP["md"], pady=(0, SP["md"]))
+            self.bar.refresh()
+        else:
+            self.bar.grid_remove()
+        self.pages["playing"].refresh()
+        path = self.now_playing_path()
+        if path != self._last_path:
+            self._last_path = path
+            if self._page == "library":
+                self.pages["library"].refresh()
+            else:
+                self._lib_dirty = True
+        cur = pb.current if pb else None
+        if self._fullscreen and (cur is None or cur["kind"] != "video"):
+            self.toggle_fullscreen(False)
+
+    def toggle_fullscreen(self, on=None):
+        cur = self.playback.current if self.playback else None
+        on = (not self._fullscreen) if on is None else on
+        if on and (cur is None or cur["kind"] != "video"):
+            return
+        self._fullscreen = on
+        self.attributes("-fullscreen", on)
+        if on:
+            self.sidebar.grid_remove()
+            self.bar.grid_remove()
+        else:
+            self.sidebar.grid()
+        self.pages["playing"].set_immersive(on)
+        self.show_page("playing")
+        if not on:
+            self._apply_playback_change()
+
+    def _shortcut_space(self, _e=None):
+        if self._typing() or not self.playback or not self.playback.queue:
+            return None
+        self.playback.toggle()
+        return "break"
+
+    def _tick(self):
+        try:
+            if self.playback:
+                self.playback.tick()
+                self.bar.tick()
+        except Exception:
+            log.exception("tick")
+        self.after(TICK_MS, self._tick)
 
     # ------------------------------------------------------------------ login
     def login_tip_text(self):
@@ -1265,8 +766,9 @@ class App(ctk.CTk):
         self.with_browser_check(run, test=True)
 
     # ------------------------------------------------------------------ componentes
-    def missing(self):
-        st = deps.status()
+    @staticmethod
+    def missing(st=None):
+        st = st or deps.status()
         out = []
         if not st["ffmpeg"]:
             out.append("ffmpeg")
@@ -1278,7 +780,11 @@ class App(ctk.CTk):
         deps.refresh_path()
         st = deps.status()
         self.pages["settings"].update_deps(st, self._installing)
-        miss = self.missing()
+        miss = self.missing(st)
+        for name in miss:            # diagnóstico no app.log (uma vez por sessão)
+            if name not in self._diag_logged:
+                self._diag_logged.add(name)
+                log.info("\n".join(deps.diagnose(name)))
         names = ", ".join(deps.COMPONENTS[m].label for m in miss)
         self.pages["download"].set_banner(t("missing_banner", names=names) if miss else "", self._installing)
 
@@ -1304,6 +810,28 @@ class App(ctk.CTk):
         else:
             self.run_dep_task("install", [name])
 
+    def locate_dep(self, name):
+        """"Localizar…": o usuário aponta o executável (ou a pasta do VLC) manualmente."""
+        comp = deps.COMPONENTS[name]
+        exe = "vlc.exe" if name == "vlc" else comp.exe + (".exe" if os.name == "nt" else "")
+        path = filedialog.askopenfilename(title=t("locate_title", name=comp.label),
+                                          filetypes=[(comp.label, exe), (t("all_files"), "*.*")])
+        if not path:
+            return
+        path = os.path.normpath(path)
+        deps.CUSTOM_PATHS[name] = path
+        if name == "vlc":
+            player.reset()
+        if deps.find(name):
+            self.settings.component_paths[name] = path
+            self.save()
+            self.toast.show(t("located_ok", name=comp.label), "success")
+        else:
+            deps.CUSTOM_PATHS.pop(name, None)
+            ChoiceDialog(self, t("app_name"), t("locate_invalid", name=comp.label), "", [(t("btn_ok"), None, "accent")],
+                         detail=path, icon="warning", icon_color=C["warning"]).show()
+        self.refresh_deps()
+
     def run_dep_task(self, action, names):
         if not names or self._installing:
             return
@@ -1327,6 +855,11 @@ class App(ctk.CTk):
                     if action == "install":
                         ok = deps.install(n, out)
                         text = t("installed_ok" if ok else "installed_fail", name=label)
+                        if not ok:      # mostra onde procurou, para dar para resolver com "Localizar…"
+                            for line in deps.diagnose(n):
+                                out(line)
+                                log.info(line)
+                            text += "\n" + t("locate_hint", name=label)
                     else:
                         ok = deps.uninstall(n, out)
                         text = t("uninstalled_ok", name=label) if ok else \
@@ -1335,37 +868,119 @@ class App(ctk.CTk):
                     log.exception("dep task")
                     ok, text = False, f"{label}: {e}"
                 self.events.put(("install_log", text))
-                self.events.put(("install_result", (ok, text)))
+                self.events.put(("install_result", (ok, text.split("\n")[0])))
             self.events.put(("install_done", action))
         threading.Thread(target=work, daemon=True).start()
 
     # ------------------------------------------------------------------ atualizações
-    def check_updates(self):
-        def fetch():
-            req = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
-                                         headers={"Accept": "application/vnd.github+json",
-                                                  "User-Agent": "VidNeon"})
-            try:
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    data = json.load(r)
-                return data.get("tag_name", ""), data.get("html_url", "")
-            except Exception as e:
-                return "", str(e)
-        self.toast.show(t("checking_updates"), "info", 2500)
-        self._bg(fetch, lambda r: self._on_update(*(r or ("", "?"))))
+    def _auto_update_check(self):
+        s = self.settings
+        if s.auto_update_check and not updater.is_dev() and time.time() - s.last_update_check > UPDATE_EVERY:
+            self.check_updates(manual=False)
 
-    def _on_update(self, tag, info):
-        self.toast.hide()
-        if not tag:
-            ChoiceDialog(self, t("app_name"), t("update_heading_err"), info, [(t("btn_ok"), None, "accent")],
-                         icon="warning", icon_color=C["warning"]).show()
-        elif version_tuple(tag) > version_tuple(__version__):
-            if ChoiceDialog(self, t("app_name"), t("update_heading_new", tag=tag), t("update_msg_new", v=__version__),
-                            [(t("btn_cancel"), None, "secondary"), (t("btn_download_update"), "ok", "primary")],
-                            icon="update").show():
-                webbrowser.open(info)
-        else:
+    def check_updates(self, manual=True):
+        if self._updating:
+            return
+
+        def fetch():
+            try:
+                return "ok", updater.fetch_latest()
+            except updater.NoReleases:
+                return "none", None
+            except Exception as e:
+                return "error", str(e)
+        if manual:
+            self.toast.show(t("checking_updates"), "info", 10000)
+            self.pages["settings"].set_update_busy(True)
+        self._bg(fetch, lambda r: self._on_update(r or ("error", "?"), manual))
+
+    def _on_update(self, result, manual):
+        kind, info = result
+        self.pages["settings"].set_update_busy(False)
+        if manual:
+            self.toast.hide()
+        if kind == "error":
+            log.warning("update check: %s", info)
+            if manual:
+                ChoiceDialog(self, t("app_name"), t("update_heading_err"), info, [(t("btn_ok"), None, "accent")],
+                             icon="warning", icon_color=C["warning"]).show()
+            return
+        self.settings.last_update_check = time.time()
+        self.save()
+        if kind == "none":
+            if manual:
+                self.toast.show(t("no_releases"), "info")
+            return
+        state = updater.compare(info["tag"])
+        self.pages["settings"].set_update_busy(False, t("latest_published", tag=info["tag"]))
+        if state == "newer":
+            self._update_info = info
+            self.sidebar.set_update(info["tag"])
+            if manual:
+                self.show_update_dialog()
+            else:
+                self.toast.show(t("update_heading_new", tag=info["tag"]), "info", 6000)
+        elif state == "dev":
+            if manual:
+                choice = ChoiceDialog(self, t("app_name"), t("update_dev_heading"),
+                                      t("update_dev_msg", v=__version__, tag=info["tag"]),
+                                      [(t("btn_ok"), None, "secondary"), (t("btn_see_release"), "page", "accent")],
+                                      icon="update").show()
+                if choice == "page":
+                    webbrowser.open(info["url"])
+        elif manual:
             self.toast.show(t("up_to_date", v=__version__), "success")
+
+    def show_update_dialog(self):
+        info = self._update_info
+        if not info:
+            return
+        notes = updater.notes_excerpt(info.get("notes", ""))
+        message = t("update_msg_new", v=__version__) + (f"\n\n{notes}" if notes else "")
+        buttons = [(t("btn_not_now"), None, "secondary"), (t("btn_see_release"), "page", "secondary")]
+        if updater.can_self_install() and info.get("asset_url"):
+            buttons.append((t("btn_update_install"), "install", "primary"))
+        else:
+            buttons[-1] = (t("btn_download_update"), "page", "primary")
+        choice = ChoiceDialog(self, t("app_name"), t("update_heading_new", tag=info["tag"]), message, buttons,
+                              icon="update").show()
+        if choice == "page":
+            webbrowser.open(info["url"])
+        elif choice == "install":
+            self._download_update(info)
+
+    def _download_update(self, info):
+        if self._updating:
+            return
+        self._updating = True
+        self.toast.show(t("update_downloading", p=0), "info", 600000)
+
+        def work():
+            try:
+                path = updater.download(info["asset_url"], info.get("asset_size", 0),
+                                        lambda f: self.events.put(("update_progress", f)))
+                self.events.put(("update_ready", path))
+            except Exception as e:
+                log.exception("update download")
+                self.events.put(("update_failed", str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _install_update(self, path):
+        self._updating = False
+        self.toast.hide()
+        busy = self.downloader.busy()
+        if not ChoiceDialog(self, t("app_name"), t("update_ready_heading"),
+                            t("update_ready_busy") if busy else t("update_ready_msg"),
+                            [(t("btn_later"), None, "secondary"), (t("btn_install_restart"), "ok", "primary")],
+                            icon="update").show():
+            return
+        try:
+            updater.run_installer(path)
+        except Exception as e:
+            log.exception("run installer")
+            self.toast.show(t("update_failed", err=e), "error")
+            return
+        self._shutdown()
 
     # ------------------------------------------------------------------ eventos
     def _poll(self):
@@ -1382,7 +997,7 @@ class App(ctk.CTk):
 
     def _handle(self, kind, data):
         if kind == "job":
-            self._ensure_card(data)
+            self._ensure_row(data)
             if data["state"] in ("done", "error", "cancelled") or data["status"] == "st_starting":
                 self._update_counts()
             if data["state"] == "done":
@@ -1400,11 +1015,14 @@ class App(ctk.CTk):
         elif kind == "call":
             callback, result = data
             callback(result)
+        elif kind == "toast":
+            text, toast_kind = data
+            self.toast.show(text, toast_kind, 60000)
         elif kind == "install_log":
             self.pages["settings"].log_line(data)
         elif kind == "install_result":
             ok, text = data
-            self.toast.show(text, "success" if ok else "warning", 5000)
+            self.toast.show(text, "success" if ok else "warning", 6000)
         elif kind == "install_done":
             self._installing = False
             player.reset()
@@ -1417,9 +1035,22 @@ class App(ctk.CTk):
             for box in self._thumb_boxes.pop(key, []):
                 if path and box.winfo_exists():
                     box.set_path(path)
+        elif kind == "update_progress":
+            self.toast.show(t("update_downloading", p=int(data * 100)), "info", 600000)
+        elif kind == "update_ready":
+            self._install_update(data)
+        elif kind == "update_failed":
+            self._updating = False
+            self.toast.show(t("update_failed", err=data), "error", 8000)
 
     def _on_tk_error(self, exc, val, tb):
         log.error("Tk callback error", exc_info=(exc, val, tb))
+
+    def _shutdown(self):
+        self.save()
+        if self.playback:
+            self.playback.release()
+        self.destroy()
 
     def _on_close(self):
         if self.downloader.busy():
@@ -1427,5 +1058,4 @@ class App(ctk.CTk):
                                                                            (t("btn_close_anyway"), "ok", "danger")],
                                 icon="warning", icon_color=C["warning"]).show():
                 return
-        self.save()
-        self.destroy()
+        self._shutdown()
