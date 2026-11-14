@@ -1,0 +1,68 @@
+name: Build Windows
+
+# Gera o BaixadorYouTube.exe:
+#  - ao criar uma tag v* (ex.: v1.0.0) -> publica uma Release com o .exe
+#  - manualmente pela aba Actions -> .exe fica disponível como artefato
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Gravar versão e repositório
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
+          "VERSION = `"$version`"`nREPO = `"$env:GITHUB_REPOSITORY`"" | Out-File -Encoding utf8 app/_build_info.py
+          Get-Content app/_build_info.py
+
+      - name: Compilar com PyInstaller
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name BaixadorYouTube
+          --collect-all customtkinter --collect-all yt_dlp_ejs --collect-submodules yt_dlp
+          run.py
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Gerar instalador
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { "0.0.0-dev" }
+          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe", "$env:ProgramFiles\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe não encontrado" }
+          & $iscc.FullName "/DMyAppVersion=$v" installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Falha ao gerar o instalador" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BaixadorYouTube
+          path: |
+            dist/BaixadorYouTube.exe
+            dist/BaixadorYouTube-Setup.exe
+
+      - name: Publicar Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/BaixadorYouTube-Setup.exe
+            dist/BaixadorYouTube.exe
+          generate_release_notes: true
