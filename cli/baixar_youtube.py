@@ -79,7 +79,7 @@ def opcoes(modo):
 
 def main():
     os.makedirs(PASTA_SAIDA, exist_ok=True)
-    print("=== Baixador de YouTube (yt-dlp) ===")
+    print("=== VidNeon — linha de comando (yt-dlp) ===")
     print(f"Arquivos salvos em: {PASTA_SAIDA}")
     if not TEM_FFMPEG:
         print("Aviso: ffmpeg não encontrado. Qualidade limitada e áudio sai em .m4a/.webm em vez de MP3.")

@@ -1,16 +1,49 @@
-"""Configurações e histórico, salvos em %APPDATA%\\BaixadorYouTube."""
+"""Configurações e histórico, salvos em %APPDATA%\\VidNeon (migrados de %APPDATA%\\BaixadorYouTube)."""
 import json
 import os
+import shutil
 import time
 import uuid
 from dataclasses import asdict, dataclass, fields
 
-from . import APP_ID
+from . import APP_ID, OLD_APP_IDS
+
+
+def _base_dir() -> str:
+    return os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+
+
+def _migrate_old_data(new_path: str) -> None:
+    """Primeira execução com o nome novo: copia config, histórico e miniaturas da pasta antiga.
+    A pasta antiga é mantida como backup."""
+    for old_id in OLD_APP_IDS:
+        old_path = os.path.join(_base_dir(), old_id)
+        if not os.path.isdir(old_path):
+            continue
+        try:
+            shutil.copytree(old_path, new_path)
+        except Exception:
+            return
+        # o histórico guarda caminhos absolutos das miniaturas: aponta para a pasta nova
+        hist = os.path.join(new_path, "historico.json")
+        try:
+            with open(hist, encoding="utf-8") as f:
+                items = json.load(f)
+            for h in items:
+                thumb = h.get("thumb") or ""
+                if thumb.startswith(old_path):
+                    h["thumb"] = new_path + thumb[len(old_path):]
+            with open(hist, "w", encoding="utf-8") as f:
+                json.dump(items, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+        return
 
 
 def config_dir() -> str:
-    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
-    path = os.path.join(base, APP_ID)
+    path = os.path.join(_base_dir(), APP_ID)
+    if not os.path.isdir(path):
+        _migrate_old_data(path)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -71,6 +104,9 @@ def save_history(items: list) -> None:
 
 def add_history(entry: dict) -> list:
     items = load_history()
+    # o mesmo arquivo baixado de novo substitui o registro antigo (sem duplicar a lista)
+    if entry.get("filepath"):
+        items = [h for h in items if h.get("filepath") != entry["filepath"]]
     entry = {"id": uuid.uuid4().hex, "when": time.strftime("%Y-%m-%d %H:%M"), **entry}
     items.insert(0, entry)
     save_history(items)

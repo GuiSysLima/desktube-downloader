@@ -1,6 +1,6 @@
 name: Build Windows
 
-# Gera o BaixadorYouTube.exe:
+# Gera o VidNeon.exe:
 #  - ao criar uma tag v* (ex.: v1.0.0) -> publica uma Release com o .exe
 #  - manualmente pela aba Actions -> .exe fica disponível como artefato
 on:
@@ -35,7 +35,8 @@ jobs:
 
       - name: Compilar com PyInstaller
         run: >
-          pyinstaller --noconfirm --onefile --windowed --name BaixadorYouTube
+          pyinstaller --noconfirm --onefile --windowed --name VidNeon
+          --icon assets/icon.ico --add-data "assets;assets"
           --collect-all customtkinter --collect-all yt_dlp_ejs --collect-submodules yt_dlp
           run.py
 
@@ -53,16 +54,16 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BaixadorYouTube
+          name: VidNeon
           path: |
-            dist/BaixadorYouTube.exe
-            dist/BaixadorYouTube-Setup.exe
+            dist/VidNeon.exe
+            dist/VidNeon-Setup.exe
 
       - name: Publicar Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/BaixadorYouTube-Setup.exe
-            dist/BaixadorYouTube.exe
+            dist/VidNeon-Setup.exe
+            dist/VidNeon.exe
           generate_release_notes: true

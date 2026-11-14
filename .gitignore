@@ -19,3 +19,9 @@ cookies*.txt
 .idea/
 Thumbs.db
 desktop.ini
+
+# Ferramentas locais (skills de agentes, pacotes npm)
+.claude/
+node_modules/
+package.json
+package-lock.json

@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field
 
 import yt_dlp
 
-from . import browsers, deps
+from . import browsers, deps, thumbs
 from .config import add_history
 
 # Rótulos traduzidos em i18n.py com as chaves "q_<qualidade>"
@@ -95,14 +95,20 @@ class Job:
     filepath: str = ""
     error: str = ""            # chave de tradução do erro
     error_args: dict = field(default_factory=dict)
+    thumb: str = ""            # caminho da miniatura (preview) em cache
+    overwrite: bool = False    # substituir o arquivo se ele já existir
+    already: bool = False      # o arquivo já estava na pasta (download pulado)
 
 
 class _Logger:
-    def __init__(self, emit):
+    def __init__(self, emit, job=None):
         self.emit = emit
+        self.job = job
 
     def debug(self, msg):
-        pass
+        # o yt-dlp avisa por aqui quando o arquivo já existe e o download é pulado
+        if self.job is not None and "has already been downloaded" in str(msg):
+            self.job.already = True
 
     def info(self, msg):
         pass
@@ -126,8 +132,8 @@ class Downloader:
         threading.Thread(target=self._worker, daemon=True).start()
 
     # --- API usada pela interface ---
-    def add(self, url, quality, playlist, subtitles) -> Job:
-        job = Job(next(self._ids), url.strip(), quality, playlist, subtitles)
+    def add(self, url, quality, playlist, subtitles, overwrite=False) -> Job:
+        job = Job(next(self._ids), url.strip(), quality, playlist, subtitles, overwrite=overwrite)
         self.jobs[job.id] = job
         self._queue.put(job.id)
         self._emit(job)
@@ -177,13 +183,15 @@ class Downloader:
             "quiet": True,
             "no_warnings": False,
             "noprogress": True,
-            "logger": _Logger(self.events.put),
+            "logger": _Logger(self.events.put, job),
             "progress_hooks": [lambda d: self._on_progress(job, d)],
             "postprocessor_hooks": [lambda d: self._on_postprocess(job, d)],
             "retries": 5,
             "fragment_retries": 5,
             "concurrent_fragment_downloads": 4,
         }
+        if job.overwrite:
+            opts["overwrites"] = True
         if ffmpeg:
             opts["ffmpeg_location"] = ffmpeg
         # Desafios JavaScript do YouTube: o yt-dlp usa o Deno por padrão; sem ele, tenta o Node
@@ -228,11 +236,10 @@ class Downloader:
         try:
             opts = self._build_opts(job, s)
             with yt_dlp.YoutubeDL(opts) as ydl:
-                code = ydl.download([job.url])
+                info = ydl.extract_info(job.url, download=True)
             if job.id in self._cancel:
                 raise Cancelled()
-            if code:
-                raise RuntimeError("__partial__")
+            self._apply_result(job, info)
         except Exception as e:  # noqa: BLE001
             if job.id in self._cancel or isinstance(e, Cancelled) or "Cancelled" in repr(e):
                 job.state, job.status = "cancelled", "st_cancelled"
@@ -245,8 +252,11 @@ class Downloader:
             self._emit(job)
             return
 
-        job.state, job.status, job.progress = "done", "st_done", 1.0
+        job.state, job.progress = "done", 1.0
+        job.status = "st_already" if job.already and not job.overwrite else "st_done"
         job.speed = job.eta = ""
+        if not job.thumb and job.filepath:
+            job.thumb = thumbs.from_file(job.filepath, thumbs.key_for("file:" + job.filepath)) or ""
         self._emit(job)
         try:
             add_history({
@@ -254,6 +264,7 @@ class Downloader:
                 "url": job.url,
                 "quality": job.quality,
                 "filepath": job.filepath,
+                "thumb": job.thumb,
                 "folder": os.path.dirname(job.filepath) if job.filepath else s.output_dir,
             })
             self.events.put(("history", None))
@@ -265,6 +276,7 @@ class Downloader:
             raise Cancelled()
         info = d.get("info_dict") or {}
         job.title = info.get("title") or job.title
+        self._ensure_thumb(job, info)
         idx, total_items = info.get("playlist_index"), info.get("n_entries") or info.get("playlist_count")
         job.item = f"{idx}/{total_items}" if idx and total_items else ""
 
@@ -286,6 +298,48 @@ class Downloader:
             job.state, job.status = "processing", "st_processing"
             job.filepath = info.get("filepath") or d.get("filename") or job.filepath
         self._emit(job)
+
+    def _apply_result(self, job, info):
+        """Usa o resultado final do yt-dlp para preencher título e arquivo — funciona mesmo
+        quando o download foi pulado porque o arquivo já existia (nesse caso não há progresso)."""
+        if not info:
+            raise RuntimeError("__partial__")
+        entries = [e for e in (info.get("entries") or []) if e]
+        last = entries[-1] if entries else info
+        if entries:
+            job.title = info.get("title") or last.get("title") or job.title
+        else:
+            job.title = info.get("title") or job.title
+        downloads = last.get("requested_downloads") or []
+        path = (downloads[-1].get("filepath") if downloads else None) or last.get("filepath")
+        if path:
+            job.filepath = path
+        if last.get("id"):
+            self._ensure_thumb(job, last)
+        if info.get("entries") is not None and len(entries) < len(list(info.get("entries") or [])):
+            raise RuntimeError("__partial__")
+
+    def _ensure_thumb(self, job, info):
+        """Busca a miniatura do item atual em segundo plano (uma vez por vídeo)."""
+        vid = info.get("id")
+        if not vid or getattr(job, "_thumb_for", None) == vid:
+            return
+        job._thumb_for = vid
+        key = thumbs.key_for(f"{info.get('extractor_key', '')}:{vid}")
+        cached = thumbs.cached(key)
+        if cached:
+            job.thumb = cached
+            self._emit(job)
+            return
+        url = thumbs.best_thumbnail_url(info)
+
+        def work():
+            path = thumbs.from_url(url, key)
+            if path and getattr(job, "_thumb_for", None) == vid:
+                job.thumb = path
+                self._emit(job)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _on_postprocess(self, job, d):
         if job.id in self._cancel:
