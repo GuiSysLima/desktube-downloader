@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Traduções da interface (português e inglês).
 
 Uso:  from .i18n import t;  t("btn_download")  /  t("err_cookie_copy", browser="Opera GX")
@@ -253,6 +256,11 @@ STRINGS = {
         "update_msg_new": "Você está com a versão {v}.",
         "btn_download_update": "Abrir página de download",
         "btn_close_anyway": "Fechar mesmo assim",
+        "sec_license": "Licença e créditos",
+        "legal_notice": "VidNeon é software livre: você pode redistribuí-lo e/ou modificá-lo sob os termos da GNU General Public License, versão 3 (GPL-3.0), com os termos adicionais do arquivo NOTICE — entre eles, manter este crédito ao autor visível em qualquer cópia ou versão modificada. Este programa é fornecido SEM NENHUMA GARANTIA.",
+        "third_party": "Usa: yt-dlp (domínio público), CustomTkinter (MIT), Pillow (MIT-CMU), python-vlc (LGPL-2.1). Componentes opcionais instalados à parte: FFmpeg, Deno, Node.js e VLC, cada um com sua própria licença.",
+        "btn_view_license": "Ver licença (GPL-3.0)",
+        "btn_view_notice": "Termos adicionais e créditos",
     },
     "en": {
         "app_name": "VidNeon",
@@ -486,6 +494,11 @@ STRINGS = {
         "update_msg_new": "You have version {v}.",
         "btn_download_update": "Open download page",
         "btn_close_anyway": "Close anyway",
+        "sec_license": "License and credits",
+        "legal_notice": "VidNeon is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License, version 3 (GPL-3.0), with the additional terms in the NOTICE file — including keeping this author credit visible in any copy or modified version. This program comes with ABSOLUTELY NO WARRANTY.",
+        "third_party": "Uses: yt-dlp (public domain), CustomTkinter (MIT), Pillow (MIT-CMU), python-vlc (LGPL-2.1). Optional components installed separately: FFmpeg, Deno, Node.js and VLC, each under its own license.",
+        "btn_view_license": "View license (GPL-3.0)",
+        "btn_view_notice": "Additional terms and credits",
     },
 }
 

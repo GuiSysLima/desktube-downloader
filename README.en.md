@@ -4,6 +4,8 @@
 
 **Download videos and audio** — free, ad-free and open source.
 
+![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-7C3AED)
+
 [Português](README.md) · **English**
 
 A free, ad-free, open-source Windows desktop app to download videos and audio from YouTube (and hundreds of other sites) in a few clicks.
@@ -161,6 +163,8 @@ app/
   player.py      built-in player (VLC)
 assets/          app icon (.ico / .png)
 cli/             terminal version (simple script)
+LICENSE          GPL-3.0 text
+NOTICE           additional terms (required attribution) and third-party licenses
 run.py           shortcut: python run.py
 build.ps1        builds the .exe and the installer locally
 installer.iss    installer script (Inno Setup, pt/en)
@@ -173,3 +177,18 @@ installer.iss    installer script (Inno Setup, pt/en)
 - Everything runs on your computer. The app sends no data to any server. The only connection besides the downloads is the optional update check against the GitHub API.
 - Cookies are read only at download time and are not stored by the app. **Never commit your `cookies.txt`**: `.gitignore` already blocks it.
 - Only download content you have the right to use, such as your own videos, freely licensed videos or personal copies allowed by your country's law, and respect YouTube's Terms of Service.
+
+---
+
+## License
+
+VidNeon is **free software**, licensed under the **[GNU GPL version 3](LICENSE)** (`GPL-3.0-only`), with the [additional terms](NOTICE) allowed by section 7 of the license:
+
+- **Attribution is required:** every distributed copy, original or modified, must keep the credit *"Based on VidNeon by Guilherme Felix (GuiSysLima)"* with the project link visible in the **About** screen, along with the `NOTICE` file and the copyright notices in the source code.
+- **Modified versions** must state that they are modified and must not pass themselves off as the original.
+- The **"VidNeon" name and logo** may not be used to identify modified versions.
+- Modified versions that are distributed must also be **GPL-3.0, with their source code available**.
+
+You are free to use, study, modify and share VidNeon, as long as you follow these rules. The program comes with **no warranty**.
+
+© 2026 Guilherme Felix (GuiSysLima). Third-party libraries and components have their own licenses; see the list in the [NOTICE](NOTICE) file.

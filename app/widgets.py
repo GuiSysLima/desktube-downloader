@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Componentes visuais reutilizáveis, todos usando os tokens de theme.py."""
 import os
 import sys
@@ -354,3 +357,23 @@ class ChoiceDialog(ctk.CTkToplevel):
         self.after(50, self._focus)
         self.master.wait_window(self)
         return self.result
+
+
+# ---------------------------------------------------------------- leitor de texto (licença)
+class TextDialog(ctk.CTkToplevel):
+    """Janela somente leitura para textos longos (LICENSE, NOTICE)."""
+
+    def __init__(self, master, title, text):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("760x620")
+        self.transient(master)
+        self.configure(fg_color=C["bg"])
+        box = ctk.CTkTextbox(self, wrap="word", font=ctk.CTkFont(family="Consolas", size=12), corner_radius=0,
+                             border_width=0)
+        box.pack(fill="both", expand=True)
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+        self.bind("<Escape>", lambda e: self.destroy())
+        apply_icon(self)
+        self.after(50, self.lift)

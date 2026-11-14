@@ -4,6 +4,8 @@
 
 **Baixe vídeos e áudios** — grátis, sem anúncios e de código aberto.
 
+![Licença: GPL-3.0](https://img.shields.io/badge/licen%C3%A7a-GPL--3.0-7C3AED)
+
 **Português** · [English](README.en.md)
 
 Aplicativo desktop para Windows, gratuito, sem anúncios e de código aberto, para baixar vídeos e áudios do YouTube (e de centenas de outros sites) com poucos cliques.
@@ -173,3 +175,18 @@ installer.iss    script do instalador (Inno Setup, pt/en)
 - Tudo roda no seu computador. O app não envia dados para nenhum servidor. A única conexão além dos downloads é a verificação opcional de atualizações na API do GitHub.
 - Os cookies são lidos só na hora do download e não são salvos pelo app. **Nunca envie seu `cookies.txt` para o repositório**: o `.gitignore` já bloqueia esse arquivo.
 - Baixe apenas conteúdo que você tem direito de usar, como seus próprios vídeos, vídeos com licença livre ou cópias para uso pessoal permitidas pela lei do seu país, respeitando os Termos de Serviço do YouTube.
+
+---
+
+## Licença
+
+O VidNeon é **software livre**, licenciado sob a **[GNU GPL versão 3](LICENSE)** (`GPL-3.0-only`), com os [termos adicionais](NOTICE) permitidos pela seção 7 da licença:
+
+- **Crédito obrigatório:** toda cópia distribuída, original ou modificada, deve manter visível na tela **Sobre** o crédito *"Based on VidNeon by Guilherme Felix (GuiSysLima)"* com o link do projeto, além do arquivo `NOTICE` e dos avisos de copyright no código.
+- **Versões modificadas** devem dizer que são modificadas e não podem se passar pela original.
+- O **nome "VidNeon" e o logotipo** não podem ser usados para identificar versões modificadas.
+- Versões modificadas que forem distribuídas também precisam ser **GPL-3.0, com o código-fonte aberto**.
+
+Você pode usar, estudar, modificar e compartilhar o VidNeon livremente, desde que respeite essas regras. O programa é fornecido **sem nenhuma garantia**.
+
+© 2026 Guilherme Felix (GuiSysLima). As bibliotecas e componentes de terceiros têm suas próprias licenças; veja a lista no arquivo [NOTICE](NOTICE).

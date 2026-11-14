@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Miniaturas (preview) dos vídeos/áudios, independentes da opção de inserir capa no arquivo.
 
 As miniaturas ficam em cache em %APPDATA%\\VidNeon\\thumbs\\<chave>.png (320x180, 16:9).

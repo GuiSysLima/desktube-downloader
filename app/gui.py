@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Interface gráfica (CustomTkinter): barra lateral + páginas Baixar, Biblioteca e Configurações.
 
 Regras de arquitetura:
@@ -25,14 +28,15 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from . import GITHUB_REPO, __version__, browsers, deps, i18n, player, thumbs
+from . import (AUTHOR, COPYRIGHT_YEAR, GITHUB_REPO, PROJECT_URL, __version__, browsers, deps, i18n, player,
+               thumbs)
 from .config import Settings, config_dir, load_history, remove_history, save_history
 from .downloader import QUALITIES, Downloader
 from .fsutil import send_to_trash
 from .i18n import t
 from .theme import BUTTON_STYLES, C, CONTROL_H, CTA_H, RADIUS, SP, apply_ctk_theme, font, glyph
-from .widgets import (ICON_PNG, Card, ChoiceDialog, IconButton, ThumbBox, Toast, apply_icon, badge, button,
-                      flash_window, icon_label, load_image, set_badge)
+from .widgets import (ICON_PNG, Card, ChoiceDialog, IconButton, TextDialog, ThumbBox, Toast, apply_icon, badge,
+                      button, flash_window, icon_label, load_image, resource_path, set_badge)
 
 log = logging.getLogger("baixador")
 
@@ -821,6 +825,8 @@ class SettingsPage(ctk.CTkFrame):
     # ---- Sobre
     def _build_about(self, p):
         app = self.app
+        project = f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else PROJECT_URL
+        # --- marca
         card = Card(p, hover=False)
         card.grid(row=0, column=0, sticky="ew")
         card.grid_columnconfigure(1, weight=1)
@@ -831,20 +837,51 @@ class SettingsPage(ctk.CTkFrame):
             row=0, column=1, sticky="sw", pady=(SP["xl"], 0))
         ctk.CTkLabel(card, text=t("version", v=__version__) + f"  •  yt-dlp {deps.ytdlp_version()}",
                      font=font("body"), text_color=C["text2"], anchor="w").grid(row=1, column=1, sticky="w")
-        ctk.CTkLabel(card, text=t("app_tagline") + ". " + t("about_text"), font=font("caption"), text_color=C["text2"], anchor="w",
-                     justify="left", wraplength=520).grid(row=2, column=1, sticky="nw", pady=(SP["xs"], SP["xl"]))
+        ctk.CTkLabel(card, text=t("app_tagline") + ". " + t("about_text"), font=font("caption"),
+                     text_color=C["text2"], anchor="w", justify="left", wraplength=520).grid(
+            row=2, column=1, sticky="nw", pady=(SP["xs"], SP["xl"]))
         row = ctk.CTkFrame(p, fg_color="transparent")
         row.grid(row=1, column=0, sticky="w", pady=SP["md"])
         b = button(row, t("btn_check_updates"), "accent", app.check_updates, kind="body")
         b.pack(side="left")
         if not GITHUB_REPO:   # build local sem repositório: sem como checar atualizações
             b.configure(state="disabled", fg_color=C["surface2"], text_color_disabled=C["text_disabled"])
-        else:
-            button(row, t("btn_project_page"), "secondary",
-                   lambda: webbrowser.open(f"https://github.com/{GITHUB_REPO}"), kind="body").pack(
-                side="left", padx=SP["sm"])
+        button(row, t("btn_project_page"), "secondary", lambda: webbrowser.open(project), kind="body").pack(
+            side="left", padx=SP["sm"])
         button(row, t("btn_open_log"), "ghost", lambda: open_path(os.path.join(config_dir(), "app.log")),
                kind="body").pack(side="left", padx=SP["sm"])
+
+        # --- licença e créditos (avisos legais exigidos pela GPL-3.0; o crédito ao autor é
+        #     obrigatório pelos termos adicionais da seção 7(b) — ver NOTICE)
+        lic, body = section_card(p, "info", t("sec_license"))
+        lic.grid(row=2, column=0, sticky="ew", pady=(SP["sm"], 0))
+        ctk.CTkLabel(body, text=f"© {COPYRIGHT_YEAR} {AUTHOR}", font=font("label"), anchor="w").grid(
+            row=0, column=0, columnspan=3, sticky="w")
+        link = ctk.CTkLabel(body, text=f"VidNeon by {AUTHOR}  —  {PROJECT_URL}", font=font("caption"),
+                            text_color=C["accent"], anchor="w", cursor="hand2")
+        link.grid(row=1, column=0, columnspan=3, sticky="w")
+        link.bind("<Button-1>", lambda e: webbrowser.open(PROJECT_URL))
+        ctk.CTkLabel(body, text=t("legal_notice"), font=font("caption"), text_color=C["text2"], anchor="w",
+                     justify="left", wraplength=640).grid(row=2, column=0, columnspan=3, sticky="w", pady=(SP["sm"], 0))
+        ctk.CTkLabel(body, text=t("third_party"), font=font("caption"), text_color=C["text2"], anchor="w",
+                     justify="left", wraplength=640).grid(row=3, column=0, columnspan=3, sticky="w", pady=(SP["sm"], 0))
+        btns = ctk.CTkFrame(body, fg_color="transparent")
+        btns.grid(row=4, column=0, columnspan=3, sticky="w", pady=(SP["md"], 0))
+        button(btns, t("btn_view_license"), "secondary", lambda: self._show_text("LICENSE", t("btn_view_license")),
+               kind="body").pack(side="left")
+        button(btns, t("btn_view_notice"), "secondary", lambda: self._show_text("NOTICE", t("btn_view_notice")),
+               kind="body").pack(side="left", padx=SP["sm"])
+
+    def _show_text(self, filename, title):
+        """Mostra LICENSE/NOTICE numa janela de leitura (o arquivo vai junto no .exe)."""
+        path = resource_path(filename)
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            webbrowser.open("https://www.gnu.org/licenses/gpl-3.0.html" if filename == "LICENSE" else PROJECT_URL)
+            return
+        TextDialog(self.app, f"{t('app_name')} — {title}", text)
 
 
 # =========================================================================== janela principal

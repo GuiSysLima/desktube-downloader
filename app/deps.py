@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Componentes externos: ffmpeg, Deno, Node.js e VLC.
 
 - ffmpeg: junta vídeo/áudio, converte para MP3, gera miniaturas.

@@ -36,7 +36,7 @@ jobs:
       - name: Compilar com PyInstaller
         run: >
           pyinstaller --noconfirm --onefile --windowed --name VidNeon
-          --icon assets/icon.ico --add-data "assets;assets"
+          --icon assets/icon.ico --add-data "assets;assets" --add-data "LICENSE;." --add-data "NOTICE;."
           --collect-all customtkinter --collect-all yt_dlp_ejs --collect-submodules yt_dlp
           run.py
 

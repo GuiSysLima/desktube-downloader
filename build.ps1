@@ -15,7 +15,7 @@ if ($remote -match 'github\.com[:/](.+?)(\.git)?$') { $repo = $Matches[1] }
 Write-Host "Versão: $version   Repositório: $repo"
 
 python -m PyInstaller --noconfirm --onefile --windowed --name VidNeon `
-    --icon assets\icon.ico --add-data "assets;assets" `
+    --icon assets\icon.ico --add-data "assets;assets" --add-data "LICENSE;." --add-data "NOTICE;." `
     --collect-all customtkinter --collect-all yt_dlp_ejs --collect-submodules yt_dlp `
     run.py
 

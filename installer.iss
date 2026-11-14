@@ -24,6 +24,8 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=dist
+; Tela de licença (GPL-3.0) antes de instalar
+LicenseFile=LICENSE
 OutputBaseFilename=VidNeon-Setup
 SetupIconFile=assets\icon.ico
 Compression=lzma2
@@ -57,6 +59,8 @@ Type: files; Name: "{autodesktop}\YouTube Downloader.lnk"
 
 [Files]
 Source: "dist\{#MyAppExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 
 [Registry]
 ; O app usa o idioma escolhido aqui como padrão (pode ser trocado depois em Configurações)

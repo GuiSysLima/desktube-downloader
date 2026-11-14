@@ -1,0 +1,83 @@
+VidNeon — Download videos and audio
+Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+https://github.com/GuiSysLima/desktube-downloader
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 only (SPDX: GPL-3.0-only), with the additional terms below.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License (file LICENSE) for details.
+
+================================================================================
+ADDITIONAL TERMS (GNU GPL version 3, section 7)
+================================================================================
+
+The following additional terms apply to this program, as permitted by
+section 7 of the GNU General Public License version 3:
+
+1. Author attribution — section 7(b).
+   Any conveyed copy of this program, in original or modified form, must
+   preserve the following author attribution in the "About" screen (or the
+   equivalent place where the program displays its Appropriate Legal Notices),
+   in a way that is reasonably visible to users:
+
+       Based on VidNeon by Guilherme Felix (GuiSysLima)
+       https://github.com/GuiSysLima/desktube-downloader
+
+   This file (NOTICE) and the copyright notices in the source files must also
+   be preserved in every conveyed copy of the source code.
+
+2. Marking of modified versions — section 7(c).
+   Modified versions must be marked in reasonable ways as different from the
+   original version (for example, by stating "modified version" and the name of
+   who modified it in the "About" screen), and must not misrepresent the origin
+   of the material.
+
+3. Name and logo — section 7(e).
+   This license does not grant permission to use the name "VidNeon" or its logo
+   (assets/icon.png, assets/icon.ico) to identify modified versions, except to
+   state accurately that the work is based on VidNeon as required by item 1.
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+VidNeon uses or interoperates with the following software, each under its own
+license:
+
+- yt-dlp ............. The Unlicense (public domain)   https://github.com/yt-dlp/yt-dlp
+- CustomTkinter ...... MIT License                      https://github.com/TomSchimansky/CustomTkinter
+- Pillow ............. MIT-CMU (HPND) License           https://python-pillow.org
+- python-vlc ......... GNU LGPL 2.1 or later            https://github.com/oaubert/python-vlc
+- Python / Tkinter ... PSF License                      https://www.python.org
+- PyInstaller ........ GPL 2.0 with bootloader exception https://pyinstaller.org
+
+Installed separately by the user (not bundled with VidNeon):
+
+- FFmpeg ............. LGPL 2.1+ / GPL 2+               https://ffmpeg.org
+- Deno ............... MIT License                      https://deno.com
+- Node.js ............ MIT License                      https://nodejs.org
+- VLC media player ... GPL 2.0 or later                 https://www.videolan.org
+
+Icons: Segoe Fluent Icons / Segoe MDL2 Assets are system fonts provided by
+Microsoft Windows and are not distributed with VidNeon.
+
+================================================================================
+RESUMO EM PORTUGUÊS (informativo; o texto em inglês acima é o que vale)
+================================================================================
+
+VidNeon é software livre sob a GNU GPL versão 3 (somente), com termos
+adicionais permitidos pela seção 7:
+
+- Toda cópia distribuída, original ou modificada, deve manter visível na tela
+  "Sobre" o crédito: "Baseado no VidNeon, de Guilherme Felix (GuiSysLima)" com o
+  link do projeto, além deste arquivo NOTICE e dos avisos de copyright no código.
+- Versões modificadas devem indicar que são modificadas e não podem se passar
+  pela original.
+- O nome "VidNeon" e o logotipo não podem ser usados para identificar versões
+  modificadas (apenas para dizer que são baseadas no VidNeon).
+- Versões modificadas que forem distribuídas também precisam ser GPL-3.0, com o
+  código-fonte disponível.
+- O programa é fornecido SEM NENHUMA GARANTIA.

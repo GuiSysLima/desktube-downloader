@@ -1,3 +1,6 @@
+# VidNeon — Copyright (C) 2026 Guilherme Felix (GuiSysLima)
+# SPDX-License-Identifier: GPL-3.0-only
+# Licença: veja LICENSE e NOTICE (termos adicionais de atribuição, seção 7 da GPL-3.0).
 """Player interno de vídeo/áudio, baseado no VLC (libvlc) embutido numa janela do app.
 
 O VLC precisa estar instalado (Configurações › Componentes). Sem ele, o app abre o arquivo
