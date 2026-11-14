@@ -5,6 +5,7 @@ Set-Location $PSScriptRoot
 
 python -m pip install -U -r requirements.txt pyinstaller
 
+git fetch --tags --quiet 2>$null   # traz as tags do GitHub (a versão vem da tag, ex.: v2.0.0)
 $version = (git describe --tags --always 2>$null)
 if (-not $version) { $version = "local" }
 # Descobre "usuario/repositorio" a partir do remote origin (para o botão de atualizações)
