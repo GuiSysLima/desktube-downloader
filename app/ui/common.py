@@ -57,3 +57,30 @@ def split_msg(key, **kw):
 def ellipsize(text, n):
     text = text or ""
     return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def context_menu(master, entries, widget=None, event=None):
+    """Menu de contexto no tema do app. entries = [(texto, comando, habilitado?) | None (separador)]."""
+    import tkinter as tk
+
+    import customtkinter as ctk
+
+    from ..theme import font
+    dark = ctk.get_appearance_mode() == "Dark"
+    m = tk.Menu(master, tearoff=0, bg="#2B2D31" if dark else "#FFFFFF", fg="#F2F3F5" if dark else "#1B1B1F",
+                activebackground="#8B3DFF", activeforeground="#FFFFFF", bd=0,
+                font=(font("body").cget("family"), 10))
+    for e in entries:
+        if e is None:
+            m.add_separator()
+        else:
+            text, cmd, *rest = e
+            m.add_command(label=text, command=cmd, state="normal" if (not rest or rest[0]) else "disabled")
+    if event is not None:
+        x, y = event.x_root, event.y_root
+    else:
+        x, y = widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height()
+    try:
+        m.tk_popup(x, y)
+    finally:
+        m.grab_release()

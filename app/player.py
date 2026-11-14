@@ -94,7 +94,11 @@ class Playback:
         if vlc is None:
             raise RuntimeError(_load_error or "VLC not available")
         self.vlc = vlc
-        self.instance = vlc.Instance("--no-video-title-show", "--quiet")
+        # decodificação por hardware e sem textos do VLC sobre o vídeo; se a versão do VLC não
+        # aceitar alguma opção, o Instance volta None e usamos só as opções básicas
+        base = ("--no-video-title-show", "--quiet")
+        self.instance = vlc.Instance(*base, "--avcodec-hw=any", "--no-osd", "--no-snapshot-preview") or \
+            vlc.Instance(*base)
         self.mp = self.instance.media_player_new()
         try:  # cliques/teclas vão para a janela do app, não para o VLC
             self.mp.video_set_mouse_input(False)

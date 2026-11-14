@@ -182,7 +182,8 @@ class App(ctk.CTk):
         self._thumb_boxes, self._thumb_pending, self._thumb_queue = {}, set(), queue.Queue()
         self._diag_logged, self._update_info, self._updating = set(), None, False
         self.playback, self._fullscreen, self._pb_after = None, False, None
-        self._last_path, self._lib_dirty = None, False
+        self._last_path, self._lib_dirty, self._playing_dirty = None, False, False
+        self._prev_page, self._fs_hide_job, self._fs_overlay = "library", None, False
         threading.Thread(target=self._thumb_worker, daemon=True).start()
         self.sidebar = self.content = self.bar = None
 
@@ -193,6 +194,7 @@ class App(ctk.CTk):
         self.bind("<Control-l>", lambda e: self._focus_url())
         self.bind("<space>", self._shortcut_space)
         self.bind("<Escape>", lambda e: self._fullscreen and self.toggle_fullscreen(False))
+        self.bind("<Motion>", self._fs_motion, add="+")
         self.bind("<F11>", lambda e: self.toggle_fullscreen())
         for i, key in enumerate(PAGES, start=1):
             self.bind(f"<Control-Key-{i}>", lambda e, k=key: self.show_page(k))
@@ -236,6 +238,8 @@ class App(ctk.CTk):
         self.show_page(self._page)
 
     def show_page(self, key, section=None):
+        if key == "playing" and self._page != "playing":
+            self._prev_page = self._page          # para o botão "Fila" voltar de onde veio
         self._page = key
         pad = (0, 0) if self._fullscreen else (SP["xxl"], SP["xl"])
         for k, p in self.pages.items():
@@ -248,7 +252,20 @@ class App(ctk.CTk):
             self.pages["settings"].show(section)
         if key == "library" and self._lib_dirty:
             self._lib_dirty = False
-            self.pages["library"].refresh()
+            self.pages["library"].set_playing(self.now_playing_path())
+        if key == "playing" and self._playing_dirty:
+            self._playing_dirty = False
+            self.pages["playing"].refresh()
+        self.bar.set_queue_active(key == "playing")
+
+    def toggle_queue_page(self):
+        """Botão "Fila" da barra: abre a tela Reproduzindo; clicando de novo, volta para a tela anterior."""
+        if self._fullscreen:
+            self.toggle_fullscreen(False)
+        if self._page == "playing":
+            self.show_page(self._prev_page if self._prev_page in self.pages else "library")
+        else:
+            self.show_page("playing")
 
     def change_language(self, label):
         code = next((c for c, name in i18n.LANGUAGES.items() if name == label), i18n.DEFAULT)
@@ -685,40 +702,102 @@ class App(ctk.CTk):
     def _apply_playback_change(self):
         self._pb_after = None
         pb = self.playback
-        has_queue = bool(pb and pb.queue)
-        if has_queue and not self._fullscreen:
-            self.bar.grid(row=1, column=1, sticky="ew", padx=SP["md"], pady=(0, SP["md"]))
+        self._layout_bar()
+        if pb and pb.queue:
             self.bar.refresh()
+        # só redesenha a tela Reproduzindo se ela estiver visível (senão, ao abrir)
+        if self._page == "playing":
+            self.pages["playing"].refresh()
         else:
-            self.bar.grid_remove()
-        self.pages["playing"].refresh()
+            self._playing_dirty = True
         path = self.now_playing_path()
         if path != self._last_path:
             self._last_path = path
-            if self._page == "library":
-                self.pages["library"].refresh()
+            if self._page == "library":     # só troca o destaque das linhas (sem recriar a lista)
+                self.pages["library"].set_playing(path)
             else:
                 self._lib_dirty = True
         cur = pb.current if pb else None
         if self._fullscreen and (cur is None or cur["kind"] != "video"):
             self.toggle_fullscreen(False)
 
+    def _layout_bar(self):
+        """Barra do player: no rodapé (normal) ou flutuando sobre o vídeo (tela cheia, some sozinha)."""
+        has_queue = bool(self.playback and self.playback.queue)
+        if self._fullscreen:
+            self.bar.grid_remove()
+            return
+        if self._fs_overlay:
+            self.bar.place_forget()
+            self._fs_overlay = False
+        if has_queue:
+            if self.bar.winfo_manager() != "grid":
+                self.bar.grid(row=1, column=1, sticky="ew", padx=SP["md"], pady=(0, SP["md"]))
+        elif self.bar.winfo_manager():
+            self.bar.grid_remove()
+
     def toggle_fullscreen(self, on=None):
         cur = self.playback.current if self.playback else None
         on = (not self._fullscreen) if on is None else on
-        if on and (cur is None or cur["kind"] != "video"):
+        if on == self._fullscreen or (on and (cur is None or cur["kind"] != "video")):
             return
         self._fullscreen = on
-        self.attributes("-fullscreen", on)
         if on:
             self.sidebar.grid_remove()
             self.bar.grid_remove()
+            self.pages["playing"].set_immersive(True)
+            self.show_page("playing")              # sem margens
+            self.attributes("-fullscreen", True)
+            self._fs_show_bar()                     # mostra os controles (com "Sair da tela cheia")
         else:
+            self._fs_cancel_hide()
+            self.configure(cursor="")
+            self.attributes("-fullscreen", False)
+            self.bar.place_forget()
+            self._fs_overlay = False
             self.sidebar.grid()
-        self.pages["playing"].set_immersive(on)
-        self.show_page("playing")
-        if not on:
-            self._apply_playback_change()
+            self.pages["playing"].set_immersive(False)
+            self.show_page("playing")
+            self._layout_bar()
+            self.after(250, lambda: apply_icon(self))   # o Windows pode trocar o ícone ao sair da tela cheia
+        self.bar.set_fullscreen(on)
+
+    # ---- controles na tela cheia: aparecem ao mexer o mouse e somem depois de 2,5 s
+    def _fs_motion(self, _e=None):
+        if self._fullscreen:
+            self._fs_show_bar()
+
+    def _fs_show_bar(self):
+        if not self._fs_overlay:
+            self._fs_overlay = True
+            self.bar.place(relx=0.5, rely=1.0, y=-SP["xl"], anchor="s", relwidth=0.86)
+            self.bar.lift()
+            self.configure(cursor="")
+        self._fs_cancel_hide()
+        self._fs_hide_job = self.after(2500, self._fs_hide_bar)
+
+    def _fs_cancel_hide(self):
+        if self._fs_hide_job:
+            self.after_cancel(self._fs_hide_job)
+            self._fs_hide_job = None
+
+    def _fs_hide_bar(self):
+        self._fs_hide_job = None
+        if not self._fullscreen:
+            return
+        try:                                   # mouse em cima da barra: continua visível
+            x, y = self.winfo_pointerxy()
+            w = self.winfo_containing(x, y)
+            while w is not None:
+                if w is self.bar:
+                    self._fs_hide_job = self.after(2500, self._fs_hide_bar)
+                    return
+                w = w.master
+        except Exception:
+            pass
+        self.bar.place_forget()
+        self._fs_overlay = False
+        self.configure(cursor="none")           # esconde o cursor sobre o vídeo, como os players
 
     def _shortcut_space(self, _e=None):
         if self._typing() or not self.playback or not self.playback.queue:
@@ -820,6 +899,7 @@ class App(ctk.CTk):
             return
         path = os.path.normpath(path)
         deps.CUSTOM_PATHS[name] = path
+        deps.invalidate()
         if name == "vlc":
             player.reset()
         if deps.find(name):
@@ -828,6 +908,7 @@ class App(ctk.CTk):
             self.toast.show(t("located_ok", name=comp.label), "success")
         else:
             deps.CUSTOM_PATHS.pop(name, None)
+            deps.invalidate()
             ChoiceDialog(self, t("app_name"), t("locate_invalid", name=comp.label), "", [(t("btn_ok"), None, "accent")],
                          detail=path, icon="warning", icon_color=C["warning"]).show()
         self.refresh_deps()

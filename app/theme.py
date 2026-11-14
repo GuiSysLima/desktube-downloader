@@ -119,7 +119,7 @@ GLYPHS = {
     "puzzle": "\uEA86", "account": "\uE77B", "about": "\uE946", "update": "\uE895", "open": "\uE8A7",
     "prev": "\uE892", "next": "\uE893", "shuffle": "\uE8B1", "repeat": "\uE8EE", "repeat_one": "\uE8ED",
     "queue": "\uE8FD", "tag": "\uE8EC", "up": "\uE70E", "down": "\uE70D", "mute": "\uE74F",
-    "nowplaying": "\uE768", "exit_fullscreen": "\uE73F",
+    "nowplaying": "\uE768", "exit_fullscreen": "\uE73F", "drag": "\uE76F",
 }
 # Sem fonte de ícones (Linux/testes): símbolos de texto simples
 FALLBACK = {
@@ -129,7 +129,7 @@ FALLBACK = {
     "audio": "♪", "volume": "◖", "fullscreen": "⛶", "back10": "«", "fwd10": "»", "globe": "◍",
     "theme": "◐", "puzzle": "◆", "account": "◉", "about": "i", "update": "↓", "open": "↗",
     "prev": "◀◀", "next": "▶▶", "shuffle": "⇄", "repeat": "↻", "repeat_one": "↻1", "queue": "≡", "tag": "#",
-    "up": "▲", "down": "▼", "mute": "×", "nowplaying": "♫", "exit_fullscreen": "⇲",
+    "up": "▲", "down": "▼", "mute": "×", "nowplaying": "♫", "exit_fullscreen": "⇲", "drag": "≡",
 }
 _icon_family = None
 
@@ -159,6 +159,24 @@ def icon_font(size=16):
     if key not in _fonts:
         fam = icon_family() or FONT_FAMILY
         _fonts[key] = ctk.CTkFont(family=fam, size=size)
+    return _fonts[key]
+
+
+def tk_font(kind="body", scale=1.0, size=None):
+    """Fonte para widgets Tk puros (linhas leves): mesmo tamanho em pixels que o CTk usa, com a escala
+    de DPI aplicada (o CTk só escala as fontes dos widgets dele)."""
+    s, strong = TYPE.get(kind, TYPE["body"])
+    fam, w = _strong() if strong else (FONT_FAMILY, "normal")
+    key = ("tk", fam, size or s, w, round(scale, 2))
+    if key not in _fonts:
+        _fonts[key] = tkfont.Font(family=fam, size=-round((size or s) * scale), weight=w)
+    return _fonts[key]
+
+
+def tk_icon_font(size=16, scale=1.0):
+    key = ("tkicon", size, round(scale, 2))
+    if key not in _fonts:
+        _fonts[key] = tkfont.Font(family=icon_family() or FONT_FAMILY, size=-round(size * scale))
     return _fonts[key]
 
 

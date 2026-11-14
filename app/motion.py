@@ -25,12 +25,27 @@ _enabled = True
 _jobs = {}                          # (id(widget), chave) -> after id
 
 
-def ease_out(t):                    # desacelera ao chegar (cubic)
+# Curvas de easing (as mesmas famílias do anime.js / Robert Penner). O anime.js é uma biblioteca de
+# JavaScript para páginas web e não roda no Tkinter; aqui ficam só as fórmulas equivalentes.
+def ease_out(t):                    # desacelera ao chegar (outCubic)
     return 1 - (1 - t) ** 3
 
 
-def ease_in(t):                     # acelera ao sair
+def ease_in(t):                     # acelera ao sair (inCubic)
     return t ** 3
+
+
+def ease_in_out(t):                 # inOutCubic
+    return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+
+
+def ease_out_expo(t):               # outExpo: chega rápido e assenta suave (deslizes curtos)
+    return 1.0 if t >= 1 else 1 - 2 ** (-10 * t)
+
+
+def ease_out_back(t, s=1.2):        # outBack com pouco "passa e volta" (elemento que surge)
+    t -= 1
+    return 1 + (s + 1) * t ** 3 + s * t ** 2
 
 
 def system_allows() -> bool:

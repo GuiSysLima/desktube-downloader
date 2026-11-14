@@ -42,6 +42,7 @@ WINGET_IDS = {k: c.winget_id for k, c in COMPONENTS.items()}
 
 def refresh_path() -> None:
     """Relê o PATH do registro (para enxergar programas instalados/removidos com o app aberto)."""
+    invalidate()
     if sys.platform != "win32":
         return
     import winreg
@@ -205,12 +206,24 @@ def locate(name: str):
     return None, tried
 
 
+_cache = {}                         # nome -> caminho (ou None); procurar a cada miniatura deixava a Biblioteca lenta
+
+
+def invalidate():
+    """Esquece o que foi encontrado (depois de instalar, desinstalar, Localizar… ou reler o PATH)."""
+    _cache.clear()
+
+
 def find(name: str):
+    if name in _cache:
+        return _cache[name]
     if name == "vlc":
-        return find_vlc_dir()
-    path, _how = locate(name)
-    if path:
-        _ensure_on_path(path)
+        path = find_vlc_dir()
+    else:
+        path, _how = locate(name)
+        if path:
+            _ensure_on_path(path)
+    _cache[name] = path
     return path
 
 

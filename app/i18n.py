@@ -357,6 +357,9 @@ STRINGS = {
         "update_ready_msg": "O VidNeon vai fechar e o instalador atualiza o app. Suas configurações e a Biblioteca são mantidas.",
         "opt_animations": "Animações",
         "opt_animations_desc": "Transições suaves ao passar o mouse, trocar de aba e nos avisos. Ficam desligadas se as animações do Windows estiverem desligadas.",
+        "drag_hint": "arraste para reordenar",
+        "menu_move_top": "Mover para o topo da fila",
+        "tip_exit_fullscreen": "Sair da tela cheia (Esc)",
     },
     "en": {
         "app_name": "VidNeon",
@@ -691,6 +694,9 @@ STRINGS = {
         "update_ready_msg": "VidNeon will close and the installer will update the app. Your settings and Library are kept.",
         "opt_animations": "Animations",
         "opt_animations_desc": "Smooth transitions on hover, tab changes and notifications. Off when Windows animations are turned off.",
+        "drag_hint": "drag to reorder",
+        "menu_move_top": "Move to top of queue",
+        "tip_exit_fullscreen": "Exit full screen (Esc)",
     },
 }
 

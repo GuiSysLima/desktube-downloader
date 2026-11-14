@@ -12,8 +12,8 @@ import customtkinter as ctk
 
 from ..config import load_history
 from ..i18n import t
-from ..theme import C, CONTROL_H, SP, THUMB, THUMB_SM, font, glyph, icon_font
-from ..widgets import HoverRow, IconButton, TabBar, ThumbBox, button, divider
+from ..theme import C, CONTROL_H, SP, THUMB, THUMB_SM, font, glyph, tk_font, tk_icon_font
+from ..widgets import HoverRow, IconButton, LightRow, TabBar, ThumbBox, Tooltip, button, divider
 from .common import AUDIO_Q, ellipsize, reveal, short_quality
 
 PAGE = 40                        # itens desenhados por vez ("Carregar mais")
@@ -74,28 +74,30 @@ def _exists(entry):
 
 
 # ---------------------------------------------------------------- linhas
-class LibraryRow(HoverRow):
+class LibraryRow(LightRow):
+    """Linha da Biblioteca (Tk puro, ver LightRow: criar dezenas de linhas CTk deixava a lista lenta)."""
+
     def __init__(self, master, page, pos, entry, playing=False, show_playlist=True):
         super().__init__(master)
-        self.page, self.entry, self.pos = page, entry, pos
+        self.page, self.entry, self.pos, self.playing = page, entry, pos, playing
         app = page.app
         _grid_cols(self)
         path = entry.get("filepath", "")
         self.exists = _exists(entry)
         # coluna #: número; no hover vira ▶
-        self.num = ctk.CTkLabel(self, text=str(pos + 1), font=font("meta"), width=COLS[0],
-                                text_color=C["accent_text"] if playing else C["text2"])
-        self.num.grid(row=0, column=0, padx=(SP["xs"], 0))
+        self.num = self.label(text=str(pos + 1), kind="meta", anchor="center",
+                              fg=C["accent_text"] if playing else C["text2"])
+        self.num.grid(row=0, column=0, sticky="ew", padx=(SP["xs"], 0))
         # título + miniatura
-        mid = ctk.CTkFrame(self, fg_color="transparent")
-        mid.grid(row=0, column=1, sticky="ew", pady=SP["xs"])
+        mid = self.frame()
+        mid.grid(row=0, column=1, sticky="ew", pady=self.px(4))
         mid.grid_columnconfigure(1, weight=1)
-        box = ThumbBox(mid, audio=entry.get("quality") in AUDIO_Q, size=THUMB_SM)
+        box = self.thumb(mid, size=THUMB_SM, audio=entry.get("quality") in AUDIO_Q)
         box.grid(row=0, column=0, rowspan=2, padx=(SP["sm"], SP["md"]))
         app.show_history_thumb(box, entry, path, self.exists)
-        ctk.CTkLabel(mid, text=ellipsize(entry.get("title") or entry.get("url", ""), 80), font=font("row"),
-                     text_color=C["accent_text"] if playing else (C["text"] if self.exists else C["text2"]),
-                     anchor="w").grid(row=0, column=1, sticky="sew")
+        self.title = self.label(mid, text=ellipsize(entry.get("title") or entry.get("url", ""), 80), kind="row",
+                                fg=C["accent_text"] if playing else (C["text"] if self.exists else C["text2"]))
+        self.title.grid(row=0, column=1, sticky="sew")
         if self.exists:
             parts = [artist_of(entry)]
             if show_playlist:
@@ -103,17 +105,18 @@ class LibraryRow(HoverRow):
             sub = "  ·  ".join(p for p in parts if p) or os.path.basename(os.path.dirname(path))
         else:
             sub = t("hist_missing_file")
-        ctk.CTkLabel(mid, text=ellipsize(sub, 90), font=font("meta"), anchor="w",
-                     text_color=C["text2"] if self.exists else C["warning"]).grid(row=1, column=1, sticky="new")
-        ctk.CTkLabel(self, text=short_quality(entry.get("quality")), font=font("meta"), text_color=C["text2"],
-                     anchor="w").grid(row=0, column=2, sticky="w")
-        ctk.CTkLabel(self, text=(entry.get("when") or "")[:10], font=font("meta"), text_color=C["text2"],
-                     anchor="w").grid(row=0, column=3, sticky="w")
-        more = IconButton(self, "more", t("tip_more"), size=30, icon_size=12)
-        more.configure(command=lambda: page.menu(more, entry))
-        more.grid(row=0, column=4)
-        self.bind_children(double_click=self._play if self.exists else None,
-                           right_click=lambda e: page.menu(None, entry, e))
+        self.label(mid, text=ellipsize(sub, 90), kind="meta",
+                   fg=C["text2"] if self.exists else C["warning"]).grid(row=1, column=1, sticky="new")
+        self.label(text=short_quality(entry.get("quality")), kind="meta", fg=C["text2"]).grid(
+            row=0, column=2, sticky="w")
+        self.label(text=(entry.get("when") or "")[:10], kind="meta", fg=C["text2"]).grid(
+            row=0, column=3, sticky="w")
+        more = self.label(text=glyph("more"), icon_size=12, fg=C["text2"], anchor="center", cursor="hand2", width=3)
+        more.grid(row=0, column=4, sticky="nsew")
+        more.bind("<Button-1>", lambda e: page.menu(more, entry))
+        Tooltip(more, t("tip_more"))
+        self.bind_parts(double_click=self._play if self.exists else None,
+                        right_click=lambda e: page.menu(None, entry, e))
         self.num.bind("<Button-1>", lambda e: self._play())
         if self.exists:
             box.on_click(self._play)
@@ -121,24 +124,24 @@ class LibraryRow(HoverRow):
     def _enter(self, _e=None):
         super()._enter(_e)
         if self.exists:
-            self.num.configure(text=glyph("play"), font=icon_font(11), cursor="hand2")
+            self.num.configure(text=glyph("play"), font=tk_icon_font(11, self.scale), cursor="hand2")
 
     def _leave(self, _e=None):
         super()._leave(_e)
-        try:
-            x, y = self.winfo_pointerxy()
-            w = self.winfo_containing(x, y)
-            while w is not None:
-                if w is self:
-                    return
-                w = w.master
-        except Exception:
-            pass
-        self.num.configure(text=str(self.pos + 1), font=font("meta"), cursor="")
+        if not self._hot:
+            self.num.configure(text=str(self.pos + 1), font=tk_font("meta", self.scale), cursor="")
 
     def _play(self):
         if self.exists:
             self.page.play_from(self.entry)
+
+    def set_playing(self, on):
+        """Troca só o destaque (sem recriar a linha) quando a música atual muda."""
+        if on == self.playing:
+            return
+        self.playing = on
+        self.set_fg(self.num, C["accent_text"] if on else C["text2"])
+        self.set_fg(self.title, C["accent_text"] if on else (C["text"] if self.exists else C["text2"]))
 
 
 class PlaylistRow(HoverRow):
@@ -174,7 +177,7 @@ class LibraryPage(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.app = app
         self._search_job, self._limit, self.items = None, PAGE, []
-        self.view, self.playlist_key = "all", None
+        self.view, self.playlist_key, self.rows = "all", None, []
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(4, weight=1)
 
@@ -241,9 +244,15 @@ class LibraryPage(ctk.CTkFrame):
         return next((g for g in group_playlists(all_items, self.app.settings.output_dir)
                      if g["key"] == self.playlist_key), None)
 
+    def set_playing(self, path):
+        for row in self.rows:
+            if row.winfo_exists():
+                row.set_playing(bool(path) and row.entry.get("filepath") == path)
+
     def refresh(self):
         for w in list(self.list.winfo_children()) + list(self.top.winfo_children()):
             w.destroy()
+        self.rows = []
         self.app._thumb_boxes = {}
         all_items = load_history()
         q = self.search.get().strip().lower()
@@ -280,8 +289,10 @@ class LibraryPage(ctk.CTkFrame):
             return
         playing = self.app.now_playing_path()
         for i, h in enumerate(self.items[:self._limit]):
-            LibraryRow(self.list, self, i, h, playing=bool(playing) and h.get("filepath") == playing,
-                       show_playlist=self.view == "all").grid(row=i, column=0, sticky="ew")
+            row = LibraryRow(self.list, self, i, h, playing=bool(playing) and h.get("filepath") == playing,
+                             show_playlist=self.view == "all")
+            row.grid(row=i, column=0, sticky="ew")
+            self.rows.append(row)
         if len(self.items) > self._limit:
             button(self.list, t("btn_load_more", n=len(self.items) - self._limit), "ghost",
                    self._more, kind="meta").grid(row=self._limit, column=0, pady=SP["md"])

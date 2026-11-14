@@ -5,11 +5,12 @@
 import os
 import sys
 import tkinter as tk
+import weakref
 
 import customtkinter as ctk
 
 from . import motion, thumbs
-from .theme import BUTTON_STYLES, C, CONTROL_H, RADIUS, SP, THUMB, font, glyph, icon_font
+from .theme import BUTTON_STYLES, C, CONTROL_H, RADIUS, SP, THUMB, font, glyph, icon_font, tk_font, tk_icon_font
 
 
 # ---------------------------------------------------------------- recursos e ícone da janela
@@ -296,8 +297,9 @@ class Toast:
         self.frame = f
         rest, start = -SP["lg"], SP["lg"]       # entra deslizando de baixo (desacelerando)
         f.place(relx=0.5, rely=1.0, y=start if motion.enabled() else rest, anchor="s")
-        motion.animate(f, "toast", motion.DUR["short"],
-                       lambda p: f.place_configure(y=round(start + (rest - start) * p)))
+        motion.animate(f, "toast", motion.DUR["medium"],
+                       lambda p: f.place_configure(y=round(start + (rest - start) * p)),
+                       easing=motion.ease_out_back)
         self._job = self.parent.after(ms, self.hide)
 
     def hide(self):
@@ -512,7 +514,7 @@ class TabBar(ctk.CTkFrame):
         def step(p):
             self.indicator.place_configure(x=round(x0 + (x - x0) * p), width=max(1, round(w0 + (w - w0) * p)),
                                            y=y)
-        motion.animate(self.indicator, "slide", motion.DUR["short"], step)
+        motion.animate(self.indicator, "slide", motion.DUR["medium"], step, easing=motion.ease_out_expo)
 
 
 # ---------------------------------------------------------------- grupo de configurações (estilo Windows 11)
@@ -550,3 +552,186 @@ class SettingsGroup(ctk.CTkFrame):
         right.grid(row=0, column=1, sticky="e", padx=(SP["lg"], 0))
         self._rows += 1
         return right, d
+
+
+# ---------------------------------------------------------------- linhas "leves" (Tk puro)
+# Widgets do CustomTkinter desenham tudo num Canvas e custam ~10 ms cada; uma lista com centenas de
+# linhas travava a interface. As listas grandes (fila de reprodução, Biblioteca) usam Tk puro, com as
+# mesmas cores/fontes do tema, a escala de DPI aplicada à mão e recoloração ao trocar claro/escuro.
+_light_rows = weakref.WeakSet()
+_photo_cache = {}
+_tracker_on = False
+
+
+def _recolor_all(_mode=None):
+    for row in list(_light_rows):
+        try:
+            if row.winfo_exists():
+                row.recolor()
+        except Exception:
+            pass
+
+
+def load_photo(path, size):
+    """PhotoImage (para tk.Label) no tamanho pedido, com cache."""
+    if not path or not os.path.isfile(path):
+        return None
+    key = (path, os.path.getmtime(path), size)
+    if key in _photo_cache:
+        return _photo_cache[key]
+    img = None
+    if thumbs.HAS_PIL:
+        try:
+            from PIL import Image, ImageTk
+            with Image.open(path) as im:
+                img = ImageTk.PhotoImage(im.convert("RGB").resize(size, Image.LANCZOS))
+        except Exception:
+            img = None
+    if img is None:
+        img = load_image(path, size) if not thumbs.HAS_PIL else None   # sem Pillow, load_image já é PhotoImage
+    if img is not None:
+        if len(_photo_cache) > 600:
+            _photo_cache.clear()
+        _photo_cache[key] = img
+    return img
+
+
+class LightThumb(tk.Frame):
+    """Miniatura de tamanho fixo em Tk puro (mesma interface do ThumbBox: set_path, reset, on_click)."""
+
+    def __init__(self, master, size, scale, audio=False):
+        self.size = (round(size[0] * scale), round(size[1] * scale))
+        super().__init__(master, width=self.size[0], height=self.size[1], bd=0, highlightthickness=0,
+                         bg=motion.resolve(C["thumb_bg"]))
+        self.pack_propagate(False)
+        self.scale, self._path, self._cb = scale, None, None
+        self.label = tk.Label(self, bd=0, bg=motion.resolve(C["thumb_bg"]), fg=motion.resolve(C["text2"]),
+                              font=tk_icon_font(18, scale))
+        self.label.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
+        self.reset(audio)
+
+    def reset(self, audio=False):
+        self._path = None
+        self.label.configure(image="", text=glyph("audio" if audio else "video"))
+
+    def set_path(self, path):
+        if path == self._path:
+            return
+        img = load_photo(path, self.size)
+        if img is not None:
+            self._path = path
+            self.label.configure(image=img, text="")
+            self.label.image = img
+
+    def on_click(self, callback):
+        self._cb = callback
+        for w in (self, self.label):
+            w.configure(cursor="hand2" if callback else "")
+            w.bind("<Button-1>", lambda e: self._cb and self._cb())
+
+    def recolor(self):
+        self.configure(bg=motion.resolve(C["thumb_bg"]))
+        self.label.configure(bg=motion.resolve(C["thumb_bg"]), fg=motion.resolve(C["text2"]))
+
+
+class LightRow(tk.Frame):
+    """Linha de lista em Tk puro com destaque animado ao passar o mouse."""
+
+    def __init__(self, master, base=None):
+        global _tracker_on
+        self.scale = ctk.ScalingTracker.get_widget_scaling(master)
+        self._base = base or C["bg"]
+        super().__init__(master, bd=0, highlightthickness=0, bg=motion.resolve(self._base))
+        self._parts, self._thumbs, self._hot, self._tint = [], [], False, None
+        _light_rows.add(self)
+        if not _tracker_on:
+            ctk.AppearanceModeTracker.add(_recolor_all)
+            _tracker_on = True
+
+    def px(self, v):
+        return round(v * self.scale)
+
+    # ---- construção
+    def label(self, master=None, text="", kind="body", fg=None, icon_size=None, **kw):
+        lbl = tk.Label(master or self, text=text, bd=0, anchor=kw.pop("anchor", "w"), justify="left",
+                       bg=motion.resolve(self._base), fg=motion.resolve(fg or C["text"]),
+                       font=tk_icon_font(icon_size, self.scale) if icon_size else tk_font(kind, self.scale), **kw)
+        self._parts.append([lbl, fg or C["text"]])
+        return lbl
+
+    def frame(self, master=None):
+        f = tk.Frame(master or self, bd=0, highlightthickness=0, bg=motion.resolve(self._base))
+        self._parts.append([f, None])
+        return f
+
+    def thumb(self, master=None, size=THUMB, audio=False):
+        box = LightThumb(master or self, size, self.scale, audio)
+        self._thumbs.append(box)
+        return box
+
+    def set_fg(self, widget, token):
+        for part in self._parts:
+            if part[0] is widget:
+                part[1] = token
+        widget.configure(fg=motion.resolve(token))
+
+    def bind_parts(self, double_click=None, right_click=None):
+        widgets = [self] + [p[0] for p in self._parts] + [w for b in self._thumbs for w in (b, b.label)]
+        for w in widgets:
+            w.bind("<Enter>", self._enter, add="+")
+            w.bind("<Leave>", self._leave, add="+")
+            if double_click:
+                w.bind("<Double-Button-1>", lambda e: double_click(), add="+")
+            if right_click:
+                w.bind("<Button-3>", right_click, add="+")
+
+    # ---- cores
+    def set_bg(self, color):
+        self.configure(bg=color)
+        for w, _fg in self._parts:
+            w.configure(bg=color)
+
+    def tint(self, token):
+        """Fundo fixo (ex.: item sendo arrastado). None volta ao normal."""
+        self._tint = token
+        motion.cancel(self, "hover")
+        self.set_bg(motion.resolve(token or (C["row_hover"] if self._hot else self._base)))
+
+    def flash(self, token, duration=motion.DUR["medium"]):
+        """Acende e apaga (ex.: mostra onde o item arrastado foi parar)."""
+        start, end = token, self._base
+        motion.animate(self, "hover", duration, lambda p: self.set_bg(motion.mix(start, end, p)),
+                       easing=motion.ease_in_out)
+
+    def recolor(self):
+        self.set_bg(motion.resolve(self._tint or (C["row_hover"] if self._hot else self._base)))
+        for w, fg in self._parts:
+            if fg is not None:
+                w.configure(fg=motion.resolve(fg))
+        for b in self._thumbs:
+            b.recolor()
+
+    def _enter(self, _e=None):
+        if self._hot:
+            return
+        self._hot = True
+        if self._tint is None:
+            motion.animate(self, "hover", motion.DUR["micro"],
+                           lambda p: self.set_bg(motion.mix(self._base, C["row_hover"], p)))
+
+    def _leave(self, _e=None):
+        try:
+            x, y = self.winfo_pointerxy()
+            w = self.winfo_containing(x, y)
+            while w is not None:
+                if w is self:
+                    return
+                w = w.master
+        except Exception:
+            pass
+        if not self._hot:
+            return
+        self._hot = False
+        if self._tint is None:
+            motion.animate(self, "hover", round(motion.DUR["micro"] * motion.EXIT),
+                           lambda p: self.set_bg(motion.mix(C["row_hover"], self._base, p)), easing=motion.ease_in)
