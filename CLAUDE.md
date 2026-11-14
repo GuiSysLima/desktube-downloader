@@ -78,7 +78,25 @@ Dados do usuário: `%APPDATA%\VidNeon\` → `config.json`, `historico.json`, `th
   sem passar pelo App, exceto refresh simples (`app.pages["download"].refresh_login()`).
 - Trocar o idioma recria toda a interface (`_build_ui`); o player continua (o handle do vídeo é reatribuído).
 - O vídeo é desenhado num `tk.Frame` da página Reproduzindo (`video_handle()` → `set_hwnd`). Ao tocar um vídeo, o
-  app abre essa página. A tela cheia (F11/duplo clique) esconde barra lateral, fila e barra do player; Esc sai.
+  app abre essa página. Tela cheia (botão da barra, F11 ou duplo clique): some a barra lateral e a fila; a barra do
+  player passa a **flutuar sobre o vídeo** (`place`), aparece ao mexer o mouse e some após 2,5 s (o cursor também).
+  O botão vira "Sair da tela cheia"; Esc também sai. Ao sair, o ícone da janela é reaplicado (`apply_icon`).
+- Botão "Fila" da barra alterna: abre Reproduzindo e, clicando de novo, volta para a tela anterior (`_prev_page`).
+
+## Desempenho (regras que evitam a lentidão da v2.1.0)
+
+- Widgets do CustomTkinter custam ~10 ms cada (desenham num Canvas). **Listas grandes usam Tk puro**:
+  `widgets.LightRow` / `LightThumb` (fila de reprodução e Biblioteca), com fontes `tk_font()`/`tk_icon_font()`
+  já na escala de DPI, cores resolvidas com `motion.resolve()` e recoloração automática ao trocar claro/escuro.
+- A fila **reaproveita** as linhas (`QueueRow.set_item`) e só redesenha se a assinatura da fila mudou; desenha
+  `VISIBLE` (40) itens por vez com "Mostrar mais".
+- Telas escondidas não são redesenhadas: marcam "sujo" e atualizam ao abrir (`_playing_dirty`, `_lib_dirty`).
+  Na Biblioteca, trocar a música só muda o destaque (`set_playing`), sem recriar a lista.
+- `PlayerBar._set()` só reconfigura um widget quando o valor muda (o tick roda a cada 250 ms).
+- `deps.find()` tem cache (`deps.invalidate()` ao reler o PATH, instalar/desinstalar ou Localizar…).
+- VLC com `--avcodec-hw=any --no-osd` (cai para as opções básicas se a versão não aceitar).
+- Arrastar para reordenar a fila: limiar de 6 px, indicador de inserção, rolagem automática perto das bordas e
+  "flash" no item ao soltar. Durante o arraste a fila não é redesenhada.
 
 ## Histórico e Biblioteca
 
@@ -129,8 +147,10 @@ Dados do usuário: `%APPDATA%\VidNeon\` → `config.json`, `historico.json`, `th
 
 ## Animações (motion.py)
 
-- Tokens: `DUR` micro 110 ms (hover), short 180 ms (aba, aviso, progresso, diálogo), medium 240 ms; saída =
-  `EXIT` (65%) da entrada; `ease_out` ao entrar, `ease_in` ao sair.
+- Tokens: `DUR` micro 110 ms (hover), short 180 ms (progresso, diálogo), medium 240 ms (aba, aviso); saída =
+  `EXIT` (65%) da entrada. Curvas iguais às do anime.js (outCubic, inCubic, inOutCubic, outExpo, outBack).
+- **anime.js não é usado**: é uma biblioteca JavaScript para páginas web e não roda em Tkinter; só as fórmulas
+  de easing foram reproduzidas em `motion.py`.
 - Onde há animação (com significado, 1–2 por tela): hover de linhas e da barra lateral (transição de cor),
   sublinhado das abas deslizando (`TabBar`), aviso (`Toast`) entrando/saindo de baixo, barra de progresso
   avançando suave, diálogos com fade-in (alpha da janela).
@@ -190,4 +210,6 @@ Dados do usuário: `%APPDATA%\VidNeon\` → `config.json`, `historico.json`, `th
 - Pós-2.0.0 (correções do arquivo "Correções - VidNeon"): detecção robusta de componentes + Localizar…,
   atualização funcional, player integrado com fila estilo Spotify e barra fixa em todas as telas, aba Playlists
   com troca de capa, redesign sem "cara de IA", versão com ícone centralizada no rodapé, este CLAUDE.md,
-  animações (motion.py) e cores neon mais vivas.
+  animações (motion.py) e cores neon mais vivas (v2.1.0).
+- v2.2.0: desempenho (linhas em Tk puro, fila reaproveitada, telas preguiçosas), arrastar para reordenar a fila,
+  controles flutuantes na tela cheia, botão Fila que alterna, easings no estilo anime.js.
