@@ -7,7 +7,12 @@ python -m pip install -U -r requirements.txt pyinstaller
 
 $version = (git describe --tags --always 2>$null)
 if (-not $version) { $version = "local" }
-"VERSION = `"$version`"`nREPO = `"`"" | Out-File -Encoding utf8 app\_build_info.py
+# Descobre "usuario/repositorio" a partir do remote origin (para o botão de atualizações)
+$repo = ""
+$remote = (git remote get-url origin 2>$null)
+if ($remote -match 'github\.com[:/](.+?)(\.git)?$') { $repo = $Matches[1] }
+"VERSION = `"$version`"`nREPO = `"$repo`"" | Out-File -Encoding utf8 app\_build_info.py
+Write-Host "Versão: $version   Repositório: $repo"
 
 python -m PyInstaller --noconfirm --onefile --windowed --name BaixadorYouTube `
     --collect-all customtkinter --collect-all yt_dlp_ejs --collect-submodules yt_dlp `
