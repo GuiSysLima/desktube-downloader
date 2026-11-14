@@ -1,0 +1,87 @@
+"""Configurações e histórico, salvos em %APPDATA%\\BaixadorYouTube."""
+import json
+import os
+import time
+import uuid
+from dataclasses import asdict, dataclass, fields
+
+from . import APP_ID
+
+
+def config_dir() -> str:
+    base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    path = os.path.join(base, APP_ID)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+CONFIG_PATH = os.path.join(config_dir(), "config.json")
+HISTORY_PATH = os.path.join(config_dir(), "historico.json")
+DEFAULT_OUTPUT = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
+HISTORY_LIMIT = 300
+
+
+@dataclass
+class Settings:
+    output_dir: str = DEFAULT_OUTPUT
+    browser: str = "none"          # chave de browsers.BROWSERS, "none" ou "file"
+    cookies_file: str = ""
+    quality: str = "best"          # chave de downloader.QUALITIES
+    playlist: bool = False
+    subtitles: bool = False
+    sub_langs: str = "pt.*,en.*"
+    embed_metadata: bool = True
+    embed_thumbnail: bool = False
+    watch_clipboard: bool = True
+    theme: str = "system"          # system | light | dark
+    language: str = ""             # "pt" | "en" | "" (automático: instalador ou Windows)
+
+    @classmethod
+    def load(cls) -> "Settings":
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+            known = {f.name for f in fields(cls)}
+            return cls(**{k: v for k, v in data.items() if k in known})
+        except Exception:
+            return cls()
+
+    def save(self) -> None:
+        tmp = CONFIG_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(asdict(self), f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_PATH)
+
+
+def load_history() -> list:
+    try:
+        with open(HISTORY_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_history(items: list) -> None:
+    tmp = HISTORY_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items[:HISTORY_LIMIT], f, indent=2, ensure_ascii=False)
+    os.replace(tmp, HISTORY_PATH)
+
+
+def add_history(entry: dict) -> list:
+    items = load_history()
+    entry = {"id": uuid.uuid4().hex, "when": time.strftime("%Y-%m-%d %H:%M"), **entry}
+    items.insert(0, entry)
+    save_history(items)
+    return items
+
+
+def remove_history(entry: dict) -> None:
+    """Remove uma entrada (pelo id, ou pelo conteúdo nas entradas antigas sem id)."""
+    items = load_history()
+    for i, h in enumerate(items):
+        if (entry.get("id") and h.get("id") == entry["id"]) or (not entry.get("id") and h == entry):
+            del items[i]
+            break
+    save_history(items)
