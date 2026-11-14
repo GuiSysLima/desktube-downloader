@@ -47,14 +47,17 @@ VidNeon puts yt-dlp behind a simple interface and handles the problems above on 
 - **Whole playlists**, saved in a subfolder named after the playlist.
 - **Subtitles** in the languages you choose, embedded in the video.
 - **Thumbnail preview** of every video or audio file, in the queue and in the list, even with the embed-cover option off. For older files, the thumbnail is generated from the file itself.
-- **Built-in player**: plays videos and audio inside the app, with pause, skip back/forward 10 s, a seek bar, volume and full screen. It uses VLC; without it, the file opens in the Windows player.
+- **Player and play queue** (Spotify-style): videos and audio play inside the app. A bar pinned to the bottom, on every screen, shows the cover, title and channel, with shuffle, repeat, a seek bar and volume. The **Now playing** screen shows the video (or the audio cover) and the queue, which you can reorder. In the Library: *Play*, *Play next* and *Add to queue*. It uses VLC; without it, the file opens in the Windows player.
+- **Playlists**: each item of a downloaded playlist goes into the Library with its channel and playlist name. The *Playlists* tab lets you play a whole playlist and **change its cover**, which is applied in the app, as `folder.jpg` in the folder and, if you want, inside the files (.mp3, .m4a, .mp4).
 - **Metadata and cover** (title, channel, chapters and thumbnail) written into the file.
 - **Download folder** shown on the main screen, with buttons to open and change it.
-- **Library**: a list of downloaded videos, with search and buttons to play, open the folder, download again or delete. If the file is still in the folder, "Download again" asks whether you want to play the current file or replace it. When deleting, you choose between removing it from the **list only** or **deleting the file**; the file goes to the Recycle Bin and the app warns you before deleting.
+- **Library**: a list of downloaded videos (title, channel, format and date), with search and buttons to play, open the folder, download again or delete. If the file is still in the folder, "Download again" asks whether you want to play the current file or replace it. When deleting, you choose between removing it from the **list only** or **deleting the file**; the file goes to the Recycle Bin and the app warns you before deleting.
 - **Pastes links on its own** when you copy a YouTube link and switch back to the app.
 - **Languages**: English and Portuguese, switchable instantly in *Settings › General*.
-- **Modern Windows 11-style interface**: sidebar, light and dark themes, brand colors (neon rose and violet) and native Windows icons (Segoe Fluent Icons).
-- **Shortcuts**: Ctrl+V pastes the link and starts downloading · Ctrl+L focuses the link field · Ctrl+1/2/3 switch between Download, Library and Settings.
+- **Windows 11-style interface**: sidebar, borderless lists, grouped settings, light and dark themes, brand colors (neon rose and violet) and native Windows icons (Segoe Fluent Icons).
+- **Subtle animations** (hover, tab changes, notifications, progress) that respect the Windows reduce-animations setting and can be turned off in *Settings › General*.
+- **Updates**: *Settings › About › Check for updates* compares your version with the latest GitHub Release and, in the installed app, downloads and runs the new installer. The automatic check (once a day) can be turned off.
+- **Shortcuts**: Ctrl+V pastes the link and starts downloading · Ctrl+L focuses the link field · Ctrl+1/2/3/4 switch between Download, Library, Now playing and Settings · Space pauses/resumes · F11 full screen (video) · Esc leaves full screen.
 - **Theme**: light, dark or follow the system.
 - **Installer** in English or Portuguese, with a choice of installation folder.
 
@@ -76,7 +79,7 @@ flowchart LR
 1. **Interface** (`app/gui.py`): takes the links and adds each one to the queue. The interface never freezes, because downloads run in another thread and report progress through an event queue.
 2. **Downloader** (`app/downloader.py`): builds the yt-dlp options from the settings (format, login, subtitles, post-processing) and downloads one item at a time. If the ideal format doesn't exist, it falls back to alternatives (MP4+M4A → any video+audio → single file).
 3. **Login** (`app/browsers.py`): detects the installed browsers and reads cookies **locally**, using yt-dlp's own reader. Opera GX has its own profile folder, which the app passes to yt-dlp. Cookies never leave your computer.
-4. **Components** (`app/deps.py`): looks for ffmpeg, Deno and Node.js, installs the missing ones with `winget`, and reloads the Windows PATH without a restart.
+4. **Components** (`app/deps.py`): looks for ffmpeg, Deno and Node.js in the PATH, in the WinGet links and in the folders where winget, Scoop and Chocolatey install them; installs the missing ones with `winget` and reloads the Windows PATH without a restart. If something still isn't found, *Locate…* lets you point to the executable, and `app.log` records where the app looked.
 5. **Errors** (`friendly_error`): turns yt-dlp's technical message into clear guidance.
 6. **Data** (`app/config.py`): settings and history are stored in `%APPDATA%\VidNeon` (`config.json` and `historico.json`). On the first run of v2, the v1 data (`%APPDATA%\BaixadorYouTube`) is copied automatically.
 7. **Languages** (`app/i18n.py`): all text lives in one dictionary per language. The starting language is the one chosen in the installer; if there is none, it is the Windows language.
@@ -107,6 +110,7 @@ If Windows SmartScreen shows a warning, click *More info* and then *Run anyway*.
 | "Could not read the cookies" | Fully close the browser (including the tray icon) or use a `cookies.txt`. |
 | "The browser encrypted its cookies" | Use Firefox or export a `cookies.txt` with the *Get cookies.txt LOCALLY* extension. |
 | Low-quality video | Install ffmpeg. |
+| ffmpeg/Deno installed but "Not found" | In **Settings › Components**, click **Locate…** and point to the `.exe` (for example `%LOCALAPPDATA%\Microsoft\WinGet\Packages\...\ffmpeg.exe`). `app.log` shows where the app looked. |
 
 ---
 
@@ -150,7 +154,8 @@ After about 5 minutes, the `v2.0.0` Release appears with the installer and the p
 ```
 app/
   main.py        entry point
-  gui.py         interface (CustomTkinter)
+  gui.py         main window: sidebar, pages, player bar, events
+  ui/            pages: download.py, library.py, playing.py, settings.py (+ common.py)
   downloader.py  queue and yt-dlp integration
   browsers.py    browser detection and cookie reading
   deps.py        ffmpeg / Deno / Node and winget installation
@@ -160,7 +165,9 @@ app/
   theme.py       design system: colors, fonts, radii, spacing, icons
   widgets.py     reusable UI components (cards, buttons, dialogs, toasts)
   thumbs.py      cached thumbnails (preview)
-  player.py      built-in player (VLC)
+  player.py      playback engine: queue + VLC (Playback)
+  covers.py      custom covers (app, folder.jpg, inside the file)
+  updater.py     update check against GitHub Releases
 assets/          app icon (.ico / .png)
 cli/             terminal version (simple script)
 LICENSE          GPL-3.0 text

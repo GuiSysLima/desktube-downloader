@@ -47,14 +47,17 @@ O VidNeon coloca o yt-dlp atrás de uma interface simples e resolve sozinho os p
 - **Playlists inteiras**, salvas numa subpasta com o nome da playlist.
 - **Legendas** no idioma que você escolher, inseridas direto no vídeo.
 - **Preview com miniatura** de cada vídeo ou áudio, na fila e na lista, mesmo com a opção de inserir capa desligada. Para arquivos antigos, a miniatura é gerada a partir do próprio arquivo.
-- **Player interno**: reproduz vídeos e áudios dentro do app, com pausar, avançar e voltar 10 s, barra de tempo, volume e tela cheia. Usa o VLC; sem ele, o arquivo abre no player do Windows.
+- **Player e fila de reprodução** (no estilo do Spotify): vídeos e áudios tocam dentro do app. Uma barra fixa no rodapé, presente em todas as telas, mostra a capa, o título e o canal, com aleatório, repetir, barra de tempo e volume. A tela **Reproduzindo** mostra o vídeo (ou a capa do áudio) e a fila, que pode ser reordenada. Na Biblioteca: *Tocar*, *Tocar a seguir* e *Adicionar à fila*. Usa o VLC; sem ele, o arquivo abre no player do Windows.
+- **Playlists**: cada item de uma playlist baixada entra na Biblioteca com o canal e o nome da playlist. A aba *Playlists* permite tocar a playlist inteira e **trocar a capa**, que é aplicada no app, como `folder.jpg` na pasta e, se você quiser, dentro dos arquivos (.mp3, .m4a, .mp4).
 - **Metadados e capa** (título, canal, capítulos e miniatura) gravados no arquivo.
 - **Pasta de destino** visível na tela principal, com botões para abrir e trocar.
-- **Biblioteca**: lista dos vídeos baixados, com busca e botões para reproduzir, abrir a pasta, baixar novamente ou excluir. Se o arquivo ainda estiver na pasta, "Baixar novamente" pergunta se você quer reproduzir o arquivo atual ou substituí-lo. Ao excluir, você escolhe entre remover **só da lista** ou **apagar o arquivo**; o arquivo vai para a Lixeira e o app avisa antes de apagar.
+- **Biblioteca**: lista dos vídeos baixados (título, canal, formato e data), com busca e botões para reproduzir, abrir a pasta, baixar novamente ou excluir. Se o arquivo ainda estiver na pasta, "Baixar novamente" pergunta se você quer reproduzir o arquivo atual ou substituí-lo. Ao excluir, você escolhe entre remover **só da lista** ou **apagar o arquivo**; o arquivo vai para a Lixeira e o app avisa antes de apagar.
 - **Cola o link sozinho** quando você copia um link do YouTube e volta para o app.
 - **Idiomas**: português e inglês, com troca na hora em *Configurações › Geral*.
-- **Interface moderna** no estilo Windows 11: barra lateral, tema claro e escuro, cores da marca (rosa neon e violeta) e ícones nativos do Windows (Segoe Fluent Icons).
-- **Atalhos**: Ctrl+V cola o link e já começa a baixar · Ctrl+L vai para o campo de link · Ctrl+1/2/3 alternam entre Baixar, Biblioteca e Configurações.
+- **Interface** no estilo Windows 11: barra lateral, listas sem bordas, configurações agrupadas, tema claro e escuro, cores da marca (rosa neon e violeta) e ícones nativos do Windows (Segoe Fluent Icons).
+- **Animações** discretas (hover, troca de aba, avisos, progresso), que respeitam a opção do Windows de reduzir animações e podem ser desligadas em *Configurações › Geral*.
+- **Atualizações**: *Configurações › Sobre › Verificar atualizações* compara a sua versão com a última Release do GitHub e, no app instalado, baixa e roda o instalador novo. A checagem automática (uma vez por dia) pode ser desligada.
+- **Atalhos**: Ctrl+V cola o link e já começa a baixar · Ctrl+L vai para o campo de link · Ctrl+1/2/3/4 alternam entre Baixar, Biblioteca, Reproduzindo e Configurações · Espaço pausa/continua · F11 tela cheia (vídeo) · Esc sai da tela cheia.
 - **Tema** claro, escuro ou igual ao do sistema.
 - **Instalador** em português ou inglês, com escolha da pasta de instalação.
 
@@ -76,7 +79,7 @@ flowchart LR
 1. **Interface** (`app/gui.py`): recebe os links e coloca cada um na fila. A interface nunca trava, porque os downloads rodam em outra thread e mandam o progresso por uma fila de eventos.
 2. **Downloader** (`app/downloader.py`): monta as opções do yt-dlp de acordo com as configurações (formato, login, legendas, pós-processamento) e baixa um item por vez. Se o formato ideal não existir, tenta alternativas (MP4+M4A → qualquer vídeo+áudio → arquivo único).
 3. **Login** (`app/browsers.py`): detecta os navegadores instalados e lê os cookies **localmente**, com o leitor do próprio yt-dlp. O Opera GX tem uma pasta de perfil própria, que o app informa ao yt-dlp. Os cookies nunca saem do seu computador.
-4. **Componentes** (`app/deps.py`): procura o ffmpeg, o Deno e o Node.js, instala os que faltarem com o `winget` e relê o PATH do Windows sem precisar reiniciar.
+4. **Componentes** (`app/deps.py`): procura o ffmpeg, o Deno e o Node.js no PATH, nos atalhos do WinGet e nas pastas onde o winget, o Scoop e o Chocolatey instalam; instala os que faltarem com o `winget` e relê o PATH do Windows sem reiniciar. Se ainda assim algo não for encontrado, *Localizar…* permite apontar o executável, e o `app.log` registra onde o app procurou.
 5. **Erros** (`friendly_error`): converte a mensagem técnica do yt-dlp numa orientação clara.
 6. **Dados** (`app/config.py`): as configurações e o histórico ficam em `%APPDATA%\VidNeon` (`config.json` e `historico.json`). Na primeira execução da v2, os dados da v1 (`%APPDATA%\BaixadorYouTube`) são copiados automaticamente.
 7. **Idiomas** (`app/i18n.py`): todos os textos ficam num dicionário por idioma. O idioma inicial é o escolhido no instalador; se não houver, é o idioma do Windows.
@@ -107,6 +110,7 @@ Se aparecer o aviso do Windows SmartScreen, clique em *Mais informações* e dep
 | "Não foi possível ler os cookies" | Feche o navegador por completo (inclusive o ícone perto do relógio) ou use um `cookies.txt`. |
 | "O navegador criptografou os cookies" | Use o Firefox ou exporte um `cookies.txt` com a extensão *Get cookies.txt LOCALLY*. |
 | Vídeo em qualidade baixa | Instale o ffmpeg. |
+| ffmpeg/Deno instalados, mas "Não encontrado" | Em **Configurações › Componentes**, clique em **Localizar…** e aponte o `.exe` (por exemplo, `%LOCALAPPDATA%\Microsoft\WinGet\Packages\...\ffmpeg.exe`). O `app.log` mostra onde o app procurou. |
 
 ---
 
@@ -150,7 +154,8 @@ Depois de uns 5 minutos, a Release `v2.0.0` aparece com o instalador e o `.exe` 
 ```
 app/
   main.py        ponto de entrada
-  gui.py         interface (CustomTkinter)
+  gui.py         janela principal: barra lateral, páginas, barra do player, eventos
+  ui/            páginas: download.py, library.py, playing.py, settings.py (+ common.py)
   downloader.py  fila e integração com o yt-dlp
   browsers.py    detecção de navegadores e leitura de cookies
   deps.py        ffmpeg / Deno / Node e instalação pelo winget
@@ -160,7 +165,9 @@ app/
   theme.py       design system: cores, fontes, raios, espaçamentos, ícones
   widgets.py     componentes visuais reutilizáveis (cards, botões, diálogos, avisos)
   thumbs.py      miniaturas (preview) em cache
-  player.py      player interno (VLC)
+  player.py      motor de reprodução: fila + VLC (Playback)
+  covers.py      capas personalizadas (app, folder.jpg, dentro do arquivo)
+  updater.py     verificação de atualizações pelas Releases do GitHub
 assets/          ícone do app (.ico / .png)
 cli/             versão de terminal (script simples)
 run.py           atalho: python run.py
