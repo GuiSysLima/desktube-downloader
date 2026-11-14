@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build
+build/
+dist/
+*.spec
+app/_build_info.py
+
+# Cookies e dados pessoais — NUNCA versionar
+cookies*.txt
+*.cookies
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
