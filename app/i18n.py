@@ -360,6 +360,8 @@ STRINGS = {
         "drag_hint": "arraste para reordenar",
         "menu_move_top": "Mover para o topo da fila",
         "tip_exit_fullscreen": "Sair da tela cheia (Esc)",
+        "update_mismatch_heading": "O instalador publicado não é da versão nova",
+        "update_mismatch_msg": "A Release {tag} traz um instalador da versão {found}. Para não reinstalar a mesma versão, a atualização foi cancelada. Avise o autor do projeto ou tente de novo mais tarde.",
     },
     "en": {
         "app_name": "VidNeon",
@@ -697,6 +699,8 @@ STRINGS = {
         "drag_hint": "drag to reorder",
         "menu_move_top": "Move to top of queue",
         "tip_exit_fullscreen": "Exit full screen (Esc)",
+        "update_mismatch_heading": "The published installer isn't the new version",
+        "update_mismatch_msg": "Release {tag} contains an installer for version {found}. To avoid reinstalling the same version, the update was cancelled. Let the project author know or try again later.",
     },
 }
 

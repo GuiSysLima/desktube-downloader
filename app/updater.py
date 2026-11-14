@@ -113,6 +113,55 @@ def download(url, size=0, on_progress=None) -> str:
     return dest
 
 
+def file_version(path):
+    """Versão gravada no .exe, ex.: (2, 2, 0). O instalador do Inno Setup guarda a AppVersion no campo
+    de texto "ProductVersion" (o número fixo fica 0.0.0.0). None se não der para ler."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ver = ctypes.windll.version
+        size = ver.GetFileVersionInfoSizeW(path, None)
+        if not size:
+            return None
+        buf = ctypes.create_string_buffer(size)
+        if not ver.GetFileVersionInfoW(path, 0, size, buf):
+            return None
+        ptr, length = ctypes.c_void_p(), wintypes.UINT()
+
+        def query(block):
+            ok = ver.VerQueryValueW(buf, block, ctypes.byref(ptr), ctypes.byref(length))
+            return bool(ok and length.value)
+
+        pairs = []
+        if query("\\VarFileInfo\\Translation"):
+            words = ctypes.cast(ptr, ctypes.POINTER(wintypes.WORD * (length.value // 2))).contents
+            pairs = [(words[i], words[i + 1]) for i in range(0, len(words) - 1, 2)]
+        for lang, cp in pairs + [(0x0409, 0x04B0), (0x0409, 0x04E4), (0x0000, 0x04B0)]:
+            for field in ("ProductVersion", "FileVersion"):
+                if query(f"\\StringFileInfo\\{lang:04x}{cp:04x}\\{field}"):
+                    m = re.search(r"(\d+)\.(\d+)\.(\d+)", ctypes.wstring_at(ptr, length.value))
+                    if m and m.groups() != ("0", "0", "0"):
+                        return tuple(int(x) for x in m.groups())
+        if query("\\"):                       # número fixo (VS_FIXEDFILEINFO), se houver
+            words = ctypes.cast(ptr, ctypes.POINTER(wintypes.DWORD * 13)).contents
+            found = (words[2] >> 16, words[2] & 0xFFFF, words[3] >> 16)
+            return found if found != (0, 0, 0) else None
+        return None
+    except Exception:
+        return None
+
+
+def installer_matches(path, tag) -> bool:
+    """False se o instalador baixado for de OUTRA versão (ex.: build feito antes de criar a tag).
+    Se não der para conferir, devolve True (não bloqueia a atualização)."""
+    expected, found = parse(tag), file_version(path)
+    if expected is None or found is None:
+        return True
+    return found == expected
+
+
 def run_installer(path):
     """Abre o instalador (ele fecha o app aberto e atualiza; ver CloseApplications no installer.iss)."""
     subprocess.Popen([path], close_fds=True)

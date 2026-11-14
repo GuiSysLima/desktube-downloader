@@ -22,7 +22,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from . import __version__, browsers, covers, deps, i18n, motion, player, thumbs, updater
+from . import PROJECT_URL, __version__, browsers, covers, deps, i18n, motion, player, thumbs, updater
 from .config import Settings, config_dir, load_history, remove_history, save_history, update_history
 from .downloader import Downloader
 from .fsutil import send_to_trash
@@ -1049,6 +1049,17 @@ class App(ctk.CTk):
     def _install_update(self, path):
         self._updating = False
         self.toast.hide()
+        info = self._update_info or {}
+        if not updater.installer_matches(path, info.get("tag", "")):
+            # o instalador anexado na Release é de outra versão: não instala (evita "atualizar" para a mesma)
+            found = ".".join(map(str, updater.file_version(path) or ())) or "?"
+            log.warning("instalador da Release %s tem a versão %s", info.get("tag"), found)
+            if ChoiceDialog(self, t("app_name"), t("update_mismatch_heading"),
+                            t("update_mismatch_msg", tag=info.get("tag", "?"), found=found),
+                            [(t("btn_ok"), None, "secondary"), (t("btn_see_release"), "page", "accent")],
+                            icon="warning", icon_color=C["warning"]).show() == "page":
+                webbrowser.open(info.get("url") or PROJECT_URL)
+            return
         busy = self.downloader.busy()
         if not ChoiceDialog(self, t("app_name"), t("update_ready_heading"),
                             t("update_ready_busy") if busy else t("update_ready_msg"),

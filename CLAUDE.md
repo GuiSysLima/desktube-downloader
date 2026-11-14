@@ -178,6 +178,12 @@ Dados do usuário: `%APPDATA%\VidNeon\` → `config.json`, `historico.json`, `th
   `VidNeon.exe` / `VidNeon-Setup.exe` na Release manualmente. Para a versão sair certa, criar a tag
   (`git tag v2.1.0 && git push origin v2.1.0`) **antes** de rodar o build e conferir em Sobre que o app mostra
   "Versão v2.1.0" (e não um hash de commit).
+- **Build só com a árvore limpa e no commit da tag.** Incidente da 2.2.0: o build foi feito com as alterações
+  ainda sem commit, com o HEAD na tag v2.1.0 → `git describe` deu `v2.1.0` → o instalador anexado na Release
+  v2.2.0 dizia ser 2.1.0, e o app atualizado continuava se achando 2.1.0. Agora o `build.ps1` **recusa** gerar com
+  alterações pendentes (`-Force` só para teste, versão vira `...-dirty`) e avisa quando não está numa tag.
+- O app confere o instalador baixado: `updater.installer_matches()` lê a "ProductVersion" do .exe (o Inno
+  Setup grava a AppVersion ali; o número fixo fica 0.0.0.0) e cancela se não bater com a tag da Release.
 - O asset do instalador na Release tem de se chamar exatamente **`VidNeon-Setup.exe`** (é o que o atualizador
   procura) e a Release não pode ser rascunho nem pré-lançamento (a API `releases/latest` ignora essas).
 - As ~10 primeiras linhas das notas da Release aparecem no diálogo "Nova versão disponível": comece pelo resumo.
